@@ -1,16 +1,84 @@
 (
+~setupInOuts = {
+	// Set input and output devices to JACK and allocate 4 outputs bus by default
+	var serverOptions = Server.default.options;
+	serverOptions.inDevice_("ASIO : JackRouter");
+	serverOptions.outDevice_("ASIO : JackRouter");
+	serverOptions.numOutputBusChannels_(4);
+	Server.default.reboot;
+};
+// ~setupInOuts.();
+
+ServerTree.removeAll;
+
+~runOnServerRestart = {
+	s.bind({
+		~synthGroup = Group.new();
+		~bufferGroup = Group.new(~synthGroup, 'addAfter');
+
+		// Recorder
+		~recorder = Synth(\recorder, [inputBus: ~synthBus, bufnum: ~recodingBuffer, gate: 1, plev: 0.9, amp: 2], ~bufferGroup);
+
+		// Loopers
+		~loopers = [
+			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 0.2, amp: 3, baseRate: 0.25], ~synthGroup),
+			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 0.5, amp: 2, baseRate: 0.5], ~synthGroup),
+			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 1, baseRate: 2, timescale: 2], ~synthGroup),
+			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 0.5, baseRate: 4, timescale: 4], ~synthGroup),
+		];
+
+		~lfos = [0.01, 0.033, 0.1, 1].collect({ |v, i| Synth(\triLFO, [freq:  v, bus: i]); i; });
+
+		~fxAndMix = {
+			var synthSig, looperSig, sig;
+
+			synthSig = In.ar(~synthBus, 2);
+			synthSig = LPF.ar(synthSig, In.kr(~lfos[0]).range(200, 2000).clip(20, 20000));
+			synthSig = synthSig * (0.1 + In.kr(~lfos[1]).unipolar(0.1).clip(0, 0.1));
+			synthSig = CombN.ar(synthSig, 10, 0.66, In.ar(~lfos[1]).range(5, 10));
+
+			looperSig = In.ar(~looperBus, 2);
+			looperSig = LPF.ar(looperSig, In.kr(~lfos[1]).range(600, 200).clip(20, 20000));
+			looperSig = HPF.ar(looperSig, In.kr(~lfos[0]).range(50, 80).clip(20, 20000));
+			looperSig = looperSig * (0.75 + In.kr(~lfos[2]).unipolar(0.25).clip(0, 0.25));
+
+			sig = synthSig + looperSig;
+			sig = FreeVerb2.ar(sig[0], sig[1], In.kr(~lfos[0]).range(0.7, 0.4), 0.9);
+
+			Out.ar(0, sig);
+		};
+	});
+};
+
+~performanceEvents = [
+	// Fill with array of functions to call to move the performance along
+	{
+		a = ~lead.play;
+		b = ~fxAndMix.play(~bufferGroup);
+	},
+	{
+		a.stop;
+		b.free;
+	}
+];
+~performanceEventCounter = 0;
+
+s.newBusAllocators;
+~synthBus = Bus.audio(s, 2);
+~looperBus = Bus.audio(s, 2);
+
 s.waitForBoot({
+	// Cleanup
+	s.freeAll;
+	Buffer.freeAll;
+
+	s.sync;
+
 	// -----------------------------------------------
-	// Allocate busses, groups and buffers
-	s.newBusAllocators;
-	~synthBus = Bus.audio(s, 2);
-	~looperBus = Bus.audio(s, 2);
-
-	~synthGroup = Group.new();
-	~bufferGroup = Group.new(~synthGroup, 'addAfter');
-
 	s.newBufferAllocators;
 	~recordingBuffer = Buffer.alloc(s, s.sampleRate * 17, 2);  // Prime number for length to make sure it's not grid aligned
+
+	s.sync;
 
 	// -----------------------------------------------
 	// Define synths
@@ -94,10 +162,16 @@ s.waitForBoot({
 		Out.kr(\bus.kr(0), sig);
 	}).add;
 
+	s.sync;
+
 	// -----------------------------------------------
-	// Start synths
-	// Main voice
-	Pbind(
+	ServerTree.add(~runOnServerRestart);
+	ServerTree.run;
+
+	s.sync;
+
+	// -----------------------------------------------
+	~lead = Pbind(
 		\dur, Prand([1, 2, 4], inf),
 		\sustain, 0.5,
 		\note, Prand([0, 3, 5, 7, 10], inf),
@@ -105,38 +179,13 @@ s.waitForBoot({
 		\amp, Pwrand([0.75, 0], [8, 2].normalizeSum, inf),
 		\group, ~synthGroup,
 		\out, ~synthBus,
-	).play;
+	);
 
-	// Recorder
-	Synth(\recorder, [inputBus: ~synthBus, bufnum: ~recodingBuffer, gate: 1, plev: 0.9, amp: 2], ~bufferGroup);
-
-	// Loopers
-	Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 0.2, amp: 3, baseRate: 0.25], ~synthGroup);
-	Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 0.5, amp: 2, baseRate: 0.5], ~synthGroup);
-	Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 1, baseRate: 2, timescale: 2], ~synthGroup);
-	Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 0.5, baseRate: 4, timescale: 4], ~synthGroup);
-
-	~lfos = [0.01, 0.033, 0.1, 1].collect({ |v, i| Synth(\triLFO, [freq:  v, bus: i]); i; });
-
-	// -----------------------------------------------
-	// Mix and FX
-	~fxAndMix = {
-		var synthSig, looperSig, sig;
-
-		synthSig = In.ar(~synthBus, 2);
-		synthSig = LPF.ar(synthSig, In.kr(~lfos[0]).range(200, 2000).clip(20, 20000));
-		synthSig = synthSig * (0.1 + In.kr(~lfos[1]).unipolar(0.1).clip(0, 0.1));
-		synthSig = CombN.ar(synthSig, 10, 0.66, In.ar(~lfos[1]).range(5, 10));
-
-		looperSig = In.ar(~looperBus, 2);
-		looperSig = LPF.ar(looperSig, In.kr(~lfos[1]).range(600, 200).clip(20, 20000));
-		looperSig = HPF.ar(looperSig, In.kr(~lfos[0]).range(50, 80).clip(20, 20000));
-		looperSig = looperSig * (0.75 + In.kr(~lfos[2]).unipolar(0.25).clip(0, 0.25));
-
-		sig = synthSig + looperSig;
-		sig = FreeVerb2.ar(sig[0], sig[1], In.kr(~lfos[0]).range(0.7, 0.4), 0.9);
-
-		Out.ar(0, sig);
-	}.play(~bufferGroup);
 });
+)
+
+// Perform
+(
+~performanceEvents[~performanceEventCounter].value;
+~performanceEventCounter = (~performanceEventCounter + 1) % ~performanceEvents.size;
 )
