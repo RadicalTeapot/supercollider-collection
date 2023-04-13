@@ -18,7 +18,7 @@ ServerTree.removeAll;
 		~mixGroup = Group.tail();
 
 		// Recorder
-		~recorder = Synth(\recorder, [inputBus: ~synthBus, bufnum: ~recodingBuffer, gate: 1, plev: 0.9, amp: 2], ~bufferGroup);
+		~recorder = Synth(\recorder, [inputBus: ~synthBus, bufnum: ~recodingBuffer, gate: 1, plev: -3.dbamp, amp: 2], ~bufferGroup);
 
 		// Loopers
 		~loopers = [
@@ -31,20 +31,21 @@ ServerTree.removeAll;
 		~lfos = [0.01, 0.033, 0.1, 1].collect({ |v, i| Synth(\triLFO, [freq:  v, bus: i]); i; });
 
 		~fxAndMix = {
-			var synthSig, looperSig, sig;
+			var synthSig, looperSig, sig, verb;
 
 			synthSig = In.ar(~synthBus, 2);
-			synthSig = LPF.ar(synthSig, In.kr(~lfos[0]).range(200, 2000).clip(20, 20000));
+			synthSig = MoogFF.ar(synthSig, In.kr(~lfos[0]).range(200, 2000).clip(20, 20000));
 			synthSig = synthSig * (0.1 + In.kr(~lfos[1]).unipolar(0.1).clip(0, 0.1));
 			synthSig = CombN.ar(synthSig, 10, 0.66, In.ar(~lfos[1]).range(5, 10));
 
 			looperSig = In.ar(~looperBus, 2);
-			looperSig = LPF.ar(looperSig, In.kr(~lfos[1]).range(600, 200).clip(20, 20000));
+			looperSig = MoogFF.ar(looperSig, In.kr(~lfos[1]).range(600, 200).clip(20, 20000));
 			looperSig = HPF.ar(looperSig, In.kr(~lfos[0]).range(50, 80).clip(20, 20000));
 			looperSig = looperSig * (0.75 + In.kr(~lfos[2]).unipolar(0.25).clip(0, 0.25));
 
-			sig = synthSig + looperSig;
-			sig = FreeVerb2.ar(sig[0], sig[1], In.kr(~lfos[0]).range(0.7, 0.4), 0.9);
+            sig = SelectX.ar(In.kr(~lfos[1]).range(0.4, 0.4), [synthSig, looperSig]);
+			verb = FreeVerb2.ar(sig[0], sig[1], 1, 0.9);
+            sig = SelectX.ar(In.kr(~lfos[0]).range(0.7, 0.4), [sig, verb]);
 
 			Out.ar(0, sig);
 		};
@@ -59,14 +60,14 @@ ServerTree.removeAll;
 ~performanceEvents = [
 	// Fill with array of functions to call to move the performance along
 	{
+        ~recordingBuffer.zero;
 		a = ~lead.play;
-		// b = ~fxAndMix.play(~mixGroup);
-		b = ~simpleMix.play(~mixGroup);
+        b = ~fxAndMix.play(~mixGroup);
+        // b = ~simpleMix.play(~mixGroup);
 	},
 	{
 		a.stop;
 		b.free;
-		~recordingBuffer.zero;
 	}
 ];
 ~performanceEventCounter = 0;
@@ -85,7 +86,7 @@ s.waitForBoot({
 
 	// -----------------------------------------------
 	s.newBufferAllocators;
-	~recordingBuffer = Buffer.alloc(s, s.sampleRate * 17, 2);  // Prime number for length to make sure it's not grid aligned
+	~recordingBuffer = Buffer.alloc(s, s.sampleRate * 23.7, 2);
 
 	s.sync;
 
@@ -105,13 +106,14 @@ s.waitForBoot({
 
 	SynthDef(\looper,{
 		// main arguments
-		arg bufnum,bus=0,baseRate=1.0,amp=1.0,timescale=0.2,panRange=1;
+		arg bufnum,bus=0,baseRate=1.0,amp=1.0,timescale=0.2,panRange=1,ampIncreaseDurationStart=5,ampIncreaseDurationEnd=2;
 		// variables to store UGens later
 		var volume;
 		var switch=0,snd,snd1,snd2,pos,pos1,pos2,posStart,posEnd,index;
 		// store the number of frames and the duraiton
 		var frames=BufFrames.kr(bufnum);
 		var duration=BufDur.kr(bufnum);
+        var sampleRate = BufSampleRate.kr(bufnum);
 		// LFO for the start point <-- tinker
 		var lfoStart=SinOsc.kr(timescale/Rand(30,60),Rand(hi:2*pi)).range(1024,frames-10240);
 		// LFO for the window lenth <-- tinker
@@ -158,6 +160,7 @@ s.waitForBoot({
 
 		// apply the volume lfo
 		volume = amp*lfoAmp*EnvGen.ar(Env.new([0,1],[Rand(1,10)],4));
+        volume = volume * lfoWindow.linlin(ampIncreaseDurationEnd * sampleRate, ampIncreaseDurationStart * sampleRate, 1.5, 1);
 
 		// do the panning
 		snd=Balance2.ar(snd[0],snd[1],lfoPan);
@@ -178,7 +181,6 @@ s.waitForBoot({
 	ServerTree.run;
 
 	s.sync;
-
 	// -----------------------------------------------
 	notes = Scale.minorPentatonic.degrees;
 	~lead = Pbind(
@@ -189,7 +191,7 @@ s.waitForBoot({
 			+
 			Pdup(Pwhite(1, 3)*notes.size, Pseq([-12,-5,0,Prand([0, -7, 7])], inf)))+12,  // Repeat the current note in seq between 1 and 3 time the note count. Since this is a multiple of the note count, it effectively changes transposition only after a whole set of shuffled note is played
 		\pan, Pmeanrand(-0.7, 0.7, inf),
-		\amp, Pwrand([0.75, 0], [8, 2].normalizeSum, inf),
+        \amp, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax'),
 		\group, ~synthGroup,
 		\out, ~synthBus,
 	);
@@ -202,3 +204,6 @@ s.waitForBoot({
 ~performanceEvents[~performanceEventCounter].value;
 ~performanceEventCounter = (~performanceEventCounter + 1) % ~performanceEvents.size;
 )
+
+~recordingBuffer.plot;
+
