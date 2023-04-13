@@ -13,8 +13,9 @@ ServerTree.removeAll;
 
 ~runOnServerRestart = {
 	s.bind({
-		~synthGroup = Group.new();
-		~bufferGroup = Group.new(~synthGroup, 'addAfter');
+		~synthGroup = Group.head();
+		~bufferGroup = Group.tail();
+		~mixGroup = Group.tail();
 
 		// Recorder
 		~recorder = Synth(\recorder, [inputBus: ~synthBus, bufnum: ~recodingBuffer, gate: 1, plev: 0.9, amp: 2], ~bufferGroup);
@@ -23,8 +24,8 @@ ServerTree.removeAll;
 		~loopers = [
 			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 0.2, amp: 3, baseRate: 0.25], ~synthGroup),
 			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 0.5, amp: 2, baseRate: 0.5], ~synthGroup),
-			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 1, baseRate: 2, timescale: 2], ~synthGroup),
-			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 0.5, baseRate: 4, timescale: 4], ~synthGroup),
+			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 1, baseRate: 2, timescale: 1], ~synthGroup),
+			Synth(\looper, [bufnum: ~recordingBuffer, bus: ~looperBus, panRange: 1, amp: 0.5, baseRate: 4, timescale: 2], ~synthGroup),
 		];
 
 		~lfos = [0.01, 0.033, 0.1, 1].collect({ |v, i| Synth(\triLFO, [freq:  v, bus: i]); i; });
@@ -47,6 +48,11 @@ ServerTree.removeAll;
 
 			Out.ar(0, sig);
 		};
+
+		~simpleMix = {
+			Out.ar(0, In.ar(~synthBus, 2));
+			Out.ar(2, In.ar(~looperBus, 2));
+		};
 	});
 };
 
@@ -54,11 +60,13 @@ ServerTree.removeAll;
 	// Fill with array of functions to call to move the performance along
 	{
 		a = ~lead.play;
-		b = ~fxAndMix.play(~bufferGroup);
+		// b = ~fxAndMix.play(~mixGroup);
+		b = ~simpleMix.play(~mixGroup);
 	},
 	{
 		a.stop;
 		b.free;
+		~recordingBuffer.zero;
 	}
 ];
 ~performanceEventCounter = 0;
@@ -68,6 +76,7 @@ s.newBusAllocators;
 ~looperBus = Bus.audio(s, 2);
 
 s.waitForBoot({
+	var notes;
 	// Cleanup
 	s.freeAll;
 	Buffer.freeAll;
@@ -171,10 +180,14 @@ s.waitForBoot({
 	s.sync;
 
 	// -----------------------------------------------
+	notes = Scale.minorPentatonic.degrees;
 	~lead = Pbind(
-		\dur, Prand([1, 2, 4], inf),
+		\dur, Pwrand([1,2,4,Rest(2)], [1, 3, 3, 2].normalizeSum, inf),
 		\sustain, 0.5,
-		\note, Prand([0, 3, 5, 7, 10], inf),
+		\note, (
+			Pn(Pshuf(notes, {rrand(4, 8)}), inf)  // Shuffle the notes after 4 to 8 repeats
+			+
+			Pdup(Pwhite(1, 3)*notes.size, Pseq([-12,-5,0,Prand([0, -7, 7])], inf)))+12,  // Repeat the current note in seq between 1 and 3 time the note count. Since this is a multiple of the note count, it effectively changes transposition only after a whole set of shuffled note is played
 		\pan, Pmeanrand(-0.7, 0.7, inf),
 		\amp, Pwrand([0.75, 0], [8, 2].normalizeSum, inf),
 		\group, ~synthGroup,
