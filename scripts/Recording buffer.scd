@@ -1,67 +1,111 @@
-(
-// Set input and output devices to JACK and allocate 4 outputs bus by default
-{
-    var serverOptions = Server.default.options;
-    serverOptions.inDevice_("ASIO : JackRouter");
-    serverOptions.outDevice_("ASIO : JackRouter");
-    serverOptions.numOutputBusChannels_(4);
-    Server.default.reboot;
-}.value;
-)
+~useJACK.value;
 
 (
 ~performanceEventCounter = 0;
 
 // -----------------------------------------------
 // Functions
+~midiFuncs = (
+    \start: {
+        "MIDI Start".postln;
+        ~nextRountine = Routine({
+            loop {
+                // Set and tweak patterns here (this will advance each time note 60 on channel 16 is received (i.e. heartbeat))
+                // use it to create the piece evolution
+
+                "Using first pattern set".postln;
+                Pdefn(\durDef, Pwrand([1,2,4,Rest(2)], [1, 3, 3, 2].normalizeSum, inf));
+                Pdefn(\noteDef, Plazy({~generateNotePattern.(notes: #[0,3,7], minTransRepeat: nil, globalTranspose: 0)}));  // Function call needs to be wrapped as Plazy arg (the event) would be passed as the argument otherwise
+                Pdefn(\ampDef, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax') * -9.dbamp);
+                1.yield;
+
+                "Using second pattern set".postln;
+                Pdefn(\noteDef, Plazy({~generateNotePattern.(notes: #[0,3,7])}));
+                Pdefn(\ampDef, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax') * -6.dbamp);
+                1.yield;
+
+                "Using thrid pattern set".postln;
+                Pdefn(\noteDef, Plazy({~generateNotePattern.()}));
+                Pdefn(\ampDef, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax') * - 3.dbamp);
+                1.yield;
+
+                "Using fourth pattern set".postln;
+                Pdefn(\durDef, Pwrand([0.5,1,2,Rest(2)], [2, 3, 3, 1].normalizeSum, inf));
+                1.yield;
+
+                "Using fifth pattern set".postln;
+                Pdefn(\durDef, Pwrand([0.5,1,2,Rest(2)], [4, 1, 1, 2].normalizeSum, inf));
+                1.yield;
+
+                "Using sixth pattern set".postln;
+                Pdefn(\ampDef, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax'));
+                1.yield;
+
+                "Using seventh pattern set".postln;
+                Pdefn(\durDef, Pwrand([0.25,0.5,2,Rest(1)], [2, 4, 1, 2].normalizeSum, inf));
+                1.yield;
+
+                "Using eigth pattern set".postln;
+                Pdefn(\noteDef, Plazy({~generateNotePattern.(notes: #[0,3,7])}));
+                Pdefn(\ampDef, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax') * -6.dbamp);
+                Pdefn(\durDef, Pwrand([0.5,1,2,Rest(2)], [2, 3, 3, 1].normalizeSum, inf));
+                1.yield;
+
+                "Using last pattern set".postln;
+                Pdefn(\noteDef, Plazy({~generateNotePattern.(globalTranspose: 24)}));
+                Pdefn(\durDef, Pwrand([0.25,0.5,1], [4, 2, 1].normalizeSum, inf));
+                Pdefn(\ampDef, Pexprand(0.66, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax'));
+                1.yield;
+                1.yield;
+            }
+        });
+        ~nextRountine.next;
+        ~startPerformance.(useSimpleMix: true);
+    },
+    \stop: {
+        "MIDI Stop".postln;
+        ~stopPerformance.();
+    },
+    \next: {
+        "MIDI Next".postln;
+        ~nextRountine.next;
+    },
+);
+
 ~connectMidi = {
     if (MIDIClient.initialized == false) {MIDIClient.init;} {};
     // catch exception thrown when already connected
     try {MIDIIn.connectAll;} {"Already connected, won't reconnect;".postln;};
 
-    ~midiFuncs = (
-        \start: MIDIFunc.start({
-            ~nextRountine = Routine({
-                loop {
-                    // TODO Set and tweak patterns here (this will advance each time a note on channel 16 is received (i.e. heartbeat))
-                    // use it to create the piece evolution
-
-                    Pdefn(\durDef, Pwrand([1,2,4,Rest(2)], [1, 3, 3, 2].normalizeSum, inf));
-                    Pdefn(\noteDef, Plazy({~generateNotePattern.()}));  // Function call needs to be wrapped as Plazy arg (the event) would be passed as the argument otherwise
-                    Pdefn(\ampDef, Pexprand(0.5, 0.75, inf) * Pkey(\freq).linlin(700, 1500, 1, 0.1, 'minmax'));
-                    1.yield;
-                }
-            });
-            ~nextRoutine.next;
-            ~startPerformance.(true);
-        }),
-        \stop: MIDIFunc.stop({
-            ~stopPerformance.();
-        }),
-        \next: MIDIFunc.noteOn({
-            ~nextRountine.next;
-        }, nil, 15), // Use any note on channel 16 (channel value is 0 based so 15 is MIDI channel 16)
-    )
+    MIDIdef.freeAll;
+    MIDIdef.start(\start, ~midiFuncs[\start]);
+    MIDIdef.stop(\stop, ~midiFuncs[\stop]);
+    MIDIdef.noteOn(\next, ~midiFuncs[\next], 60, 15);
 };
 
 ~startPerformance = {|useSimpleMix = false|
     ~recordingBuffer.zero;
 
     a = ~lead.play;
+    // a = ~midiLead.play;
 
     if (useSimpleMix)
     {b = ~simpleMix.play(~mixGroup);}
-    {b = ~fxAndMix.play(~mixGroup);}
+    {b = ~fxAndMix.play(~mixGroup);};
+
+    "Perfomance started".postln;
 };
 
 ~stopPerformance = {
     a.stop;
     b.free;
+
+    "Perfomance stopped".postln;
 };
 
 ~performanceEvents = [
     // Fill with array of functions to call to move the performance along
-    {~startPerformance.(false);},
+    {~startPerformance.(useSimpleMix: true);},
     {a.stop;},
     ~stopPerformance,
 ];
@@ -72,10 +116,12 @@
     shuffledRepeats = Pn(Pshuf(notes, {rrand(minRepeat, maxRepeat)}));
 
     if (transposePattern.isNil) {transposePattern=Pseq([-12,-5,0,Prand([0, -7, 7])], inf);} {};
-    transpose = Pdup(
+    if (minTransRepeat.isNil or: {maxTransRepeat.isNil} )
+    {transpose = 0}
+    {transpose = Pdup(
         Pwhite(minTransRepeat, maxTransRepeat) * notes.size, // Multiply by notes.size to keep it aligned with note shuffle pattern
         transposePattern,
-    );
+    )};
 
     shuffledRepeats + transpose + globalTranspose;
 };
@@ -110,10 +156,10 @@ ServerTree.removeAll;
     ~fxAndMix = {
         var synthSig, looperSig, sig, verb;
 
-        synthSig = In.ar(~synthBus, 2);
+        synthSig = Pan2.ar(SoundIn.ar(0), 0);// In.ar(~synthBus, 2);
         synthSig = MoogFF.ar(synthSig, In.kr(~lfos[0][\bus]).range(200, 2000).clip(20, 20000));
         synthSig = synthSig * (0.1 + In.kr(~lfos[1][\bus]).unipolar(0.1).clip(0, 0.1));
-        synthSig = CombN.ar(synthSig, 10, 0.66, In.ar(~lfos[1][\bus]).range(5, 10));
+        synthSig = CombN.ar(synthSig, 10, 0.66, In.kr(~lfos[1][\bus]).range(5, 10));
 
         looperSig = In.ar(~looperBus, 2);
         looperSig = MoogFF.ar(looperSig, In.kr(~lfos[1][\bus]).range(600, 200).clip(20, 20000));
@@ -132,7 +178,11 @@ ServerTree.removeAll;
         Out.ar(2, In.ar(~looperBus, 2));
     };
 
-    // ~connectMidi;
+    ~connectMidi.value;
+
+    // MIDI out
+    // if (MIDIClient.initialized == false) {MIDIClient.init;} {MIDIClient.list;};
+    // ~midiDevice = MIDIOut.newByName("2- Studio 68c MIDI Out", "2- Studio 68c MIDI Out");
 }); };
 
 // -----------------------------------------------
@@ -159,7 +209,7 @@ s.waitForBoot({
     // Define synths
     SynthDef(\recorder, {
         var sig;
-        sig = In.ar(\inputBus.ir(0), 2);
+        sig = In.ar(\inputBus.ir(0), 2);//Pan2.ar(SoundIn.ar(0), 0);
         RecordBuf.ar(sig, \bufnum.ir(0), recLevel: \rlev.kr(1), preLevel: \plev.kr(0.5), run: \gate.kr(0));
     }).add;
 
@@ -260,13 +310,27 @@ s.waitForBoot({
         \group, ~synthGroup,
         \out, ~synthBus,
     );
+
+    ~midiLead = Pbind(
+        \type, \midi,
+        \midiout, ~midiDevice,
+        \midicmd, \noteOn,
+        \chan, 0,
+        \sustain, 0.5 * Pkey(\dur),
+        \midinote, Pdefn(\noteDef) + 36,
+    ) <> ~lead;
 });
 )
+~midiDevice.allNotesOff(0);
 
 // Perform
 (
 ~performanceEvents[~performanceEventCounter].value;
 ~performanceEventCounter = (~performanceEventCounter + 1) % ~performanceEvents.size;
 )
+
+Pdefn(\durDef, Pwrand([1,2,4,Rest(2)] * 1, [1, 3, 3, 2].normalizeSum, inf));
+Pdefn(\noteDef, Plazy({~generateNotePattern.(globalTranspose: -12);}));
+~midiDevice.control(0, 20, 100);
 
 ~recordingBuffer.plot;
