@@ -1,5 +1,3 @@
-~useJACK.value;
-
 (
 ~performanceEventCounter = 0;
 
@@ -328,9 +326,5 @@ s.waitForBoot({
 ~performanceEvents[~performanceEventCounter].value;
 ~performanceEventCounter = (~performanceEventCounter + 1) % ~performanceEvents.size;
 )
-
-Pdefn(\durDef, Pwrand([1,2,4,Rest(2)] * 1, [1, 3, 3, 2].normalizeSum, inf));
-Pdefn(\noteDef, Plazy({~generateNotePattern.(globalTranspose: -12);}));
-~midiDevice.control(0, 20, 100);
 
 ~recordingBuffer.plot;
