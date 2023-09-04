@@ -1,3 +1,4 @@
+~useJACK.value;
 (
 ServerTree.removeAll;
 
@@ -7,18 +8,24 @@ ServerTree.removeAll;
         ~repitchGroup = Group.tail();
         ~fxGroup = Group.tail;
 
-        ~delay = Synth(\delay, [dur: 3.02, feedback: 0.5, in:~synthBus, out:~delayBus, amp: 2], ~fxGroup);
+        // ~delay = Synth(\delay, [dur: 3.02, feedback: 0.5, in:~synthBus, out:~delayBus, amp: 2], ~fxGroup);
 
         ~mix = {
             var synth = In.ar(~synthBus, 2);
-            var delay = HPF.ar(In.ar(~delayBus, 2), 500);
-            var sig = synth.blend(delay, 0.33);
-            var verb = HPF.ar(LPF.ar(FreeVerb2.ar(sig[0], sig[1], 1, 0.8), 1500), 60);
+            // var delay = HPF.ar(In.ar(~delayBus, 2), 500);
+            // var sig = synth.blend(delay, 0.33);
+            // var sig = synth;
+            // var verb = HPF.ar(LPF.ar(FreeVerb2.ar(sig[0], sig[1], 1, 0.8), 1500), 60);
             var repitch = In.ar(~repitchBus, 2);
-            sig = sig.blend(verb, 0.2) + repitch;
-            ReplaceOut.ar(0, sig);
+            // sig = sig.blend(verb, 0.2) + repitch;
+            // ReplaceOut.ar(0, sig);
+            Out.ar(0, synth);
+            Out.ar(2, repitch);
         }.play(~fxGroup, addAction: 'addToTail');
     });
+
+    ~connectMidiIn.("loopMIDI Port", "loopMIDI Port");
+    MIDIdef.freeAll;
 };
 
 s.newBusAllocators;
@@ -127,13 +134,19 @@ s.waitForBoot({
         \out, ~repitchBus,
         \group, ~repitchGroup,
     );
-});
-)
 
-(
-Pdefn(\prob, Pdup(16, Pseq([1, 0.66, 1, 1, 0.5, 0.33], inf)));
-~lead.play;
-~repitch.play;
+    s.sync;
+
+    MIDIdef.start(\start, {
+        Pdefn(\prob, Pdup(16, Pseq([1, 0.66, 1, 1, 0.5, 0.33], inf)));
+        a = ~lead.play;
+        b = ~repitch.play;
+        "start".postln;
+    });
+    MIDIdef.stop(\stop, {a.stop; b.stop; "stop".postln;});
+
+    s.sync;
+});
 )
 
 ~octavesBuf.setn(0, ~sortByOccurence.([0,0,12,12,-12,24]));
