@@ -1,14 +1,25 @@
-~useJACK.value;
+~useAudioInterface.value;
 (
 ServerTree.removeAll;
 
 ~init = {
     s.bind({
-        ~synthGroup = Group.new();
+        ~controlGroup = Group.new();
+        ~synthGroup = Group.tail();
         ~repitchGroup = Group.tail();
-        ~fxGroup = Group.tail;
+        ~fxGroup = Group.tail();
 
         // ~delay = Synth(\delay, [dur: 3.02, feedback: 0.5, in:~synthBus, out:~delayBus, amp: 2], ~fxGroup);
+
+        // LFOs
+        ~lfos = {
+            Out.kr(~lfoBus, [
+                VarSaw.kr(\freq1.kr(0.017),  width: \pwm1.kr(0.5)),
+                VarSaw.kr(\freq2.kr(0.053),  width: \pwm2.kr(0.5)),
+                VarSaw.kr(\freq3.kr(0.113),  width: \pwm3.kr(0.5)),
+                VarSaw.kr(\freq4.kr(0.1019), width: \pwm4.kr(0.5)),
+            ]);
+        }.play(~controlGroup);
 
         ~mix = {
             var synth = In.ar(~synthBus, 2);
@@ -32,6 +43,7 @@ s.newBusAllocators;
 ~synthBus = Bus.audio(s, 2);
 ~delayBus = Bus.audio(s, 2);
 ~repitchBus = Bus.audio(s, 2);
+~lfoBus = Bus.control(s, 4);
 
 ~sortByOccurence = {
     // Sort array by decreasing number of occurences
@@ -65,7 +77,7 @@ s.waitForBoot({
 
         sig = VarSaw.ar(note + detune, width: pwm);
 
-        cutoff = cf + (Env.perc(0, rel * 0.5).kr() * 100) + (note * 0.25);
+        cutoff = cf + (Env.perc(0, rel * 0.5).kr() * 100) + (note * 0.25) + In.kr(~lfoBus).unipolar(1000);
         sig = MoogFF.ar(sig, cutoff.clip(20, 20000));
 
         env = Env.perc(releaseTime: rel).kr(2);
@@ -117,8 +129,8 @@ s.waitForBoot({
         \notebuf, ~notesBuf,
         \octbuf, ~octavesBuf,
         \root, 48,
-        \amp, 0.5,
-        \cf, Pexprand(400, 2500, inf),
+        \amp, Pexprand(0.3, 0.7, inf),
+        \cf, Pexprand(100, 500, inf),
         \pwm, Pmeanrand(0.1, 0.9, inf),
         \prob, Pdefn(\prob),
         \group, ~synthGroup,
@@ -150,3 +162,9 @@ s.waitForBoot({
 )
 
 ~octavesBuf.setn(0, ~sortByOccurence.([0,0,12,12,-12,24]));
+
+(
+Pdefn(\prob, Pdup(16, Pseq([1, 0.66, 1, 1, 0.5, 0.33], inf)));
+~lead.play;
+~repitch.play;
+)

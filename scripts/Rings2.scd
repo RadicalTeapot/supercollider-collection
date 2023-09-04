@@ -89,7 +89,7 @@ s.waitForBoot({
     baseMelodyStream =  Pbind(
         \instrument, \voice,
         \dur, Pseq([Prand([0.125, 0.25, 0.5], {rrand(4, 8)}), Prand([Rest(4), Rest(8), Rest(16)])], inf),
-        \midinote, Pn(Pdup(Pwhite(1, 3), Pshuf(Scale.minorPentatonic.degrees + 72))),
+        \midinote, Pn(Pdup(Pwhite(1, 3), Pshuf(Scale.dorian.degrees + 72))),
         \cutoff, Pkey(\freq) * 0.85,
         \filterEnvAmp, Pkey(\freq) * 0.5,
         \rel, Pexprand(0.25, 0.5, inf),
