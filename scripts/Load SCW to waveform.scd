@@ -1,10 +1,11 @@
 ~useAudioInterface.();
+~useDevice.("JackRouter", "JackRouter", "ASIO", 0, 2);
 
 (
 {
     var wavetableFile, flatArray, arrayAsWavetable;
     // Load wavetable data an store it into an array
-    wavetableFile = SoundFile.openRead(thisProcess.nowExecutingPath.dirname ++ "/data/PLAITS01.WAV");
+    wavetableFile = SoundFile.openRead(thisProcess.nowExecutingPath.dirname ++ "/../assets/wavetables/PLAITS01.WAV");
     flatArray = FloatArray.newClear(wavetableFile.numFrames);
     wavetableFile.readData(flatArray);
     wavetableFile.close;

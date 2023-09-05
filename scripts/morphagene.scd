@@ -1,11 +1,4 @@
-({
-    var serverOptions = Server.default.options;
-    serverOptions.inDevice_("ASIO : JackRouter");
-    serverOptions.outDevice_("ASIO : JackRouter");
-    serverOptions.numOutputBusChannels_(8);
-    serverOptions.numInputBusChannels_(8);
-    Server.default.reboot;
-}.())
+~useJACK.();
 
 (
 SynthDef(\phasor, {
@@ -43,7 +36,7 @@ SynthDef(\player2, {
 
     var posBus = \posBus.ir(1);
 
-    var amp = \amp.kr(0.25);
+    var amp = \amp.kr(-6.dbamp);
     var rateLag = \rateLag.kr(0.1);
     var rate = \rate.kr(1, rateLag) * BufRateScale.ir(audioBuf);
 
@@ -63,25 +56,30 @@ SynthDef(\player2, {
     var indexBuf = \indexBuf.ir(0);
 
     var playGate = \playGate.kr(0);
+    var envLag = \envLag.kr(0.005);
 
     // Last sample was end of slice?
     var endOfSplice = LocalIn.ar(1);
     // Trigger at end of splice (when play gate is high) or when play gate becomes high
     var trigger = Changed.ar(endOfSplice + playGate) * playGate;
 
+    // TODO Use 2 buffers and crossfade to fix pops
     // Sample and hold splice index and read start / end sample number
     var index = Latch.ar(K2A.ar(inIndex), trigger);
     var start = BufRd.ar(1, indexBuf, index, 0, 1);
     var endRd = BufRd.ar(1, indexBuf, index+1, 0, 1);
-    var end = start + (endRd-startRd) * geneSize;
+    var end = start + (endRd-start) * geneSize;
 
     // Adjust for play direction
     var resetPos = (start*(rate>=0)) + (end*(rate<0));
     var phasor = Phasor.ar(trigger, rate, start-1, end+1, resetPos).clip(start, end);
-
     var bufPos = (phasor + slide).wrap(start, end);
+
+    var envOffset = envLag * rate.abs * BufSampleRate.ir(audioBuf);
+    var env = bufPos.linlin(start, start+envOffset, 0, 1) * bufPos.linlin(end-envOffset, end, 1, 0);
+
     var sig = BufRd.ar(2, audioBuf, bufPos);
-    var pos = (phasor - start) / (end - start);
+    var pos = (bufPos - start) / (end - start);
     pos = Select.ar(rate>0, [1-pos, pos]);
 
     // Adjust for play direction
@@ -91,13 +89,13 @@ SynthDef(\player2, {
     );
 
     Out.ar(posBus, pos);
-    Out.ar(audioBus, sig * amp * playGate);
+    Out.ar(audioBus, sig * env * amp * playGate);
 }).add;
 )
 
 (s.waitForBoot({
     var previous;
-    var bufferContentPath = thisProcess.nowExecutingPath.dirname ++ "/../assets/400820__makenoisemusic__mylarpianoouttakes.wav";
+    var bufferContentPath = thisProcess.nowExecutingPath.dirname ++ "/../assets/recordings/SC_230904_105002.wav";
 
     s.freeAll;
     s.newBusAllocators;
@@ -110,7 +108,8 @@ SynthDef(\player2, {
 
     // Create splices position array
     previous = 0;
-    ~splices = [0] ++ Array.rand(20, 5000, ~buf.numFrames-5000).sort ++ [~buf.numFrames.asInteger];
+    // ~splices = [0] ++ Array.rand(20, 5000, ~buf.numFrames-5000).sort ++ [~buf.numFrames.asInteger];
+    ~splices = Array.interpolation(20, 0, ~buf.numFrames).asInteger;
     ~indexBuf = Buffer.loadCollection(s, ~splices);
     s.sync;
 
@@ -135,22 +134,23 @@ SynthDef(\player2, {
     ~posBus.scope;
     */
 
-    ~synth = Synth(\player2, [audioBuf: ~buf, posBus: ~posBus, indexBuf: ~indexBuf, playGate: 1, rateLag: 0.01]);
+    ~synth = Synth(\player2, [audioBuf: ~buf, posBus: ~posBus, indexBuf: ~indexBuf, playGate: 1, rateLag: 0, amp: 0.dbamp]);
     s.sync;
     { loop {
         var index = rrand(0, ~indexBuf.numFrames-2);
         var duration = rrand(1, 5);
+        var prevRate = 1;
         3.do {
             // var rate = [rrand(0, 26.midiratio) * -1, rrand(0, 12.midiratio)].choose;  // Values from morphagene manual
-            var rate = [[-24, -12, -5, 0, 7, 12, 24].choose.midiratio*(-1), [-24, -12, -5, 0, 7, 12].choose.midiratio].choose;
-            s.bind { ~synth.set(\index, index, \rate, rate, \rateLag, rrand(0.01, 0.1)) };
+            var rate = [[-24, -12, -5, 0, 7, 12, 19, 24].choose.midiratio*(-1), [-24, -12, -5, 0, 7, 12].choose.midiratio].choose;
+            var rateDiff = (rate - prevRate).abs;
+            s.bind { ~synth.set(\index, index, \rate, rate, \rateLag, rateDiff * 0.02) };
             (duration * 0.33).wait;
         }
     }}.fork;
 });)
 
-[rrand(0, 26.midiratio) * -1, rrand(0, 12.midiratio)].choose
-
-
-
-{Trig.ar(Changed.ar(LocalIn.ar(1, 1)))}.plot(0.2);
+({
+    var p = Phasor.ar(end: 1000);
+    [p.linlin(0, 1000, 0, 1), p.linlin(0, 100, 0, 1) * p.linlin(1000-100, 1000, 1, 0)];
+}.plot(0.05))

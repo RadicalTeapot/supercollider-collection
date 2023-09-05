@@ -21,6 +21,16 @@ ServerTree.removeAll;
             ]);
         }.play(~controlGroup);
 
+        // LFOs
+        ~lfos = {
+            Out.kr(~lfoBus, [
+                VarSaw.kr(\freq1.kr(0.017),  width: \pwm1.kr(0.5)),
+                VarSaw.kr(\freq2.kr(0.053),  width: \pwm2.kr(0.5)),
+                VarSaw.kr(\freq3.kr(0.113),  width: \pwm3.kr(0.5)),
+                VarSaw.kr(\freq4.kr(0.1019), width: \pwm4.kr(0.5)),
+            ]);
+        }.play(~controlGroup);
+
         ~mix = {
             var synth = In.ar(~synthBus, 2);
             // var delay = HPF.ar(In.ar(~delayBus, 2), 500);
