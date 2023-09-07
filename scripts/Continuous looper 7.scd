@@ -1,3 +1,5 @@
+~useJACK.();
+
 (
 SynthDef(\crossfadeLooper, {
     var buf = \buf.kr(0);
@@ -11,6 +13,7 @@ SynthDef(\crossfadeLooper, {
 
     var bufRate = rate * BufRateScale.kr(buf);
     var frames = BufFrames.kr(buf);
+    var crossfadeSamples = crossfadeDuration * BufSampleRate.kr(buf);
 
     var trigger = LocalIn.ar(1);
     var toggle = ToggleFF.ar(trigger);
@@ -26,9 +29,9 @@ SynthDef(\crossfadeLooper, {
     var crossfade = VarLag.ar(toggle, crossfadeDuration);
     var sig = LinXFade2.ar(sigs[0], sigs[1], crossfade.linlin(0,1,1,-1));
 
-    var starts = Latch.kr(start, toggles).clamp(crossfadeSamples*(rate>=0), frames-(crossfadeSamples*(rate<0)));
-    var ends = Latch.kr(end, toggles).clamp(crossfadeSamples*(rate>=0), frames-(crossfadeSamples*(rate<0)));
-    LocalOut.ar(((phasors<(starts)) + (phasors>(ends))).sum);
+    var starts = Latch.kr(start, toggles).clip(crossfadeSamples*(rate>=0), frames-(crossfadeSamples*(rate<0)));
+    var ends = Latch.kr(end, toggles).clip(crossfadeSamples*(rate>=0), frames-(crossfadeSamples*(rate<0)));
+    LocalOut.ar((((phasors<starts) + (phasors>ends)) * (1-toggles)).sum);
 
     Out.ar(out, LeakDC.ar(sig) * amp);
 }).add;
@@ -36,7 +39,7 @@ SynthDef(\crossfadeLooper, {
 
 (s.waitForBoot({
     var bufferContentPath = thisProcess.nowExecutingPath.dirname ++ "/../assets/recordings/SC_230904_105002.wav";
-    var crossfadeSamples, splices, crossfadeDuration, buf, synth;
+    var splices, crossfadeDuration, buf, synth;
 
     s.freeAll;
     Buffer.freeAll;
@@ -47,8 +50,7 @@ SynthDef(\crossfadeLooper, {
     s.sync;
 
     crossfadeDuration = 0.1;
-    crossfadeSamples = buf.sampleRate * crossfadeDuration * 2; // Times two to take into account max playback rate
-    splices = Array.interpolation(20, crossfadeSamples, buf.numFrames-crossfadeSamples).asInteger;
+    splices = Array.interpolation(20, 0, buf.numFrames).asInteger;
 
     synth = Synth(\crossfadeLooper, [buf: buf, start: splices[0], end: splices[1], crossfadeDuration: crossfadeDuration, amp: 1]);
     s.sync;
