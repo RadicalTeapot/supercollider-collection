@@ -1,0 +1,5 @@
+To use classes from this folder, create a Junction to this directory in `%localappdata%/SuperCollider/Extensions` (you can find this out by running `Platform.userExtensionDir` in SuperCollider) like so
+
+```PowerShell
+New-Item $env:LOCALAPPDATA\SuperCollider\Extensions\Personal -Target .\General\ -ItemType Junction
+```
