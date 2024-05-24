@@ -87,7 +87,7 @@ SynthDef(\crossfadeLooper2, {
 )
 
 (s.waitForBoot({
-    var bufferContentPath = thisProcess.nowExecutingPath.dirname ++ "/../assets/recordings/SC_230904_105002.wav";
+    var bufferContentPath = thisProcess.nowExecutingPath.dirname ++ "/../assets/recordings/400820__makenoisemusic__mylarpianoouttakes.wav";
     var splices, crossfadeDuration, buf, synth;
 
     s.freeAll;
