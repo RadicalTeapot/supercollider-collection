@@ -23,41 +23,117 @@
 };
 
 SynthDef(\guitar, {
-    var
-    note, decay, out, amplitudes, // Input variables
-    overtones, fastDecay, slowDecay, freqDecayRate, freqDecay, // Internal variables
-    sig, fastEnvs, slowEnvs; // UGens
+    var freq, decay, out, amplitudes, overtones, duration, pan; // Input variables
+    var frequencies, fastDecay, slowDecay; // Internal variables
+    var sig, fastEnvs, slowEnvs; // UGens
 
-    note = \note.kr(60);
-    decay = \decay.kr(1);
+    freq = \freq.kr(164.81); // E3
+    decay = \decay.kr(5);
+    duration = \duration.kr(1);
     out = \out.ir(0);
     amplitudes = \amplitudes.kr((0.1).dup(12));
+    pan = \pan.kr(0);
+    overtones = \overtones.kr((1..12));
 
-    overtones = amplitudes.size;
-    fastDecay = 0.25 * decay;
-    slowDecay = 1.0 * decay;
-    freqDecayRate = -1.2;
-    freqDecay = (1-((1..overtones) * freqDecayRate).exp).reciprocal; // Slower decay for lower harmonics
+    frequencies = freq * overtones;
+    fastDecay = (frequencies.squared * (decay * 4.0 * 10e-7) * -1).exp; // Quadratic damping
+    slowDecay = (frequencies.squared * (decay * 1.0 * 10e-7) * -1).exp; // Quadratic damping
 
-    sig = SinOsc.ar(note.midicps * (1..(overtones)));
-    fastEnvs = Env.perc(releaseTime: fastDecay * freqDecay).ar(Done.none) * 0.66;
-    slowEnvs = Env.perc(releaseTime: slowDecay * freqDecay).ar(Done.none) * 0.33;
+    Env.perc(releaseTime: duration * 1.1).kr(Done.freeSelf); // To cleanup the synth
+
+    sig = SinOsc.ar(frequencies);
+    fastEnvs = Env.perc(releaseTime: duration * fastDecay).ar(Done.none) * 0.33;
+    slowEnvs = Env.perc(releaseTime: duration * slowDecay).ar(Done.none) * 0.66;
     sig = sig * amplitudes * (fastEnvs + slowEnvs);
-    sig = Clip.ar(sig.sum.dup, -1.0, 1.0) * -6.dbamp;
-    Env.perc(releaseTime: slowDecay * 1.5).kr(Done.freeSelf);
+    sig = (sig.sum * 2).tanh * 0.75;
+    sig = Pan2.ar(sig, pan);
     Out.ar(out, sig);
 }).add;
 
-Routine { loop {
-    var time, note, amp, pos, decay, pointCount, amplitudes;
-    time = rrand(0.2, 1.5);
-    note = ([36, 48, 60] +.x Scale.minorPentatonic.semitones).choose;
-    amp = rrand(0.33, 0.9);
-    pos = rrand(0.55, 0.95);
-    decay = rrand(1.0, 1.5) * time.max(1.0) * 2;
-    pointCount = 100;
-    amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 12) / pointCount;
-    Synth(\guitar, [note: note, amplitudes: amplitudes, decay: decay]);
-    time.yield;
-}}.play;
+SynthDef(\fx, {
+    var sig;
+    sig = In.ar(\out.kr(0), 2);
+    sig = sig + (NHHall.ar(sig, 1) * -6.dbamp);
+    sig = Limiter.ar(sig);
+    ReplaceOut.ar(\out.kr(0), sig);
+}).add;
+)
+
+(
+var patterns;
+var scale, root;
+var degreeToFreq;
+
+scale = Scale.minorPentatonic.semitones;
+root = 40;  // E2
+
+degreeToFreq = {|degree|
+    var midinote;
+    midinote = root + scale[degree % scale.size] + (12 * degree.div(scale.size)); // .div is integer division
+    midinote.midicps;
+};
+
+patterns = [
+    (type: \notes, pan: -0.5, \notes: [0, \, \]),
+    (type: \notes, pan: 0.5, \notes: [0, \, 3, 2, \, \, 0]),
+    (type: \random, pan: 0, \notes: (2..10) ++ (\).dup(10)),
+];
+
+s = Server.default;
+Synth.tail(s, \fx);
+
+patterns.do { |data, i|
+    Routine { loop {
+        var time, freq, amp, pos, duration, pan;
+        var pointCount, amplitudes;
+
+        if(data.type == \notes) { data.notes.do { |note|
+            if (note != \) {
+                time = rrand(0.5, 1.5);
+                amp = rrand(0.33, 0.9) * 1.5;
+                pos = rrand(0.6, 0.7);
+                duration = rrand(1.0, 1.5) * time.max(1.0) * 5;
+                pan = data.pan + rrand(-0.1, 0.1);
+                pointCount = 100;
+                amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
+                freq = degreeToFreq.(note);
+                s.makeBundle(s.latency, {
+                    Synth(\guitar, [
+                        freq: freq,
+                        amplitudes: amplitudes.drop(1),
+                        duration: duration,
+                        pan: pan,
+                        decay: 3
+                    ]);
+                });
+            };
+            time.yield;
+        }};
+
+        if (data.type == \random) {
+            var note;
+            time = rrand(0.2, 1.5);
+            amp = rrand(0.33, 0.9) * 1.5 * time.max(1.0);
+            pos = rrand(0.7, 0.9);
+            duration = rrand(1.0, 1.5) * time.max(1.0) * 2;
+            pan = data.pan + rrand(-0.1, 0.1);
+            pointCount = 100;
+            amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
+            note = data.notes.choose;
+            if (note != \) {
+                freq = degreeToFreq.(note);
+                s.makeBundle(s.latency, {
+                    Synth(\guitar, [
+                        freq: freq,
+                        amplitudes: amplitudes.drop(1),
+                        duration: duration,
+                        pan: pan,
+                        decay: (1.5 - time) / 10.0]);
+                });
+            };
+            time.yield;
+        };
+
+    }}.play;
+};
 )
