@@ -1,6 +1,16 @@
 (
 s = Server.default;
 
+~setupInOuts = {
+    |in=2, out=2|
+	s.options.inDevice_("ASIO : JackRouter");
+	s.options.outDevice_("ASIO : JackRouter");
+    s.options.numInputBusChannels_(in);
+	s.options.numOutputBusChannels_(out);
+	s.reboot;
+};
+~setupInOuts.();
+
 s.newBusAllocators;
 ~controlBus = Bus.control(s, 1);
 
