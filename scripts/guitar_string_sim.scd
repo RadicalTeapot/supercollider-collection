@@ -1,6 +1,4 @@
 (
-s = Server.default;
-
 ~setupInOuts = {
     |in=2, out=2|
 	s.options.inDevice_("ASIO : JackRouter");
@@ -10,6 +8,10 @@ s = Server.default;
 	s.reboot;
 };
 ~setupInOuts.();
+)
+
+(
+s = Server.default;
 
 s.newBusAllocators;
 ~controlBus = Bus.control(s, 1);
@@ -140,6 +142,26 @@ s.waitForBoot {
         Out.kr(out, sig);
     }).add;
 
+    SynthDef(\bowl, {
+        var freq, pan, amp, out;
+        var sig, exc;
+        freq = \freq.kr(261);
+        pan = \pan.kr(0);
+        amp = \amp.kr(-6.dbamp);
+        out = \out.ir(0);
+
+        exc = PinkNoise.ar() * Env.perc(0.01, 0.03).ar();
+        sig = Klank.ar([
+            `[[530, 1430, 2550, 3130], [-20, -34.5, -52.5, -79.8].dbamp, [20, 10, 7, 4]],
+            `[[532, 1440, 2550, 3120, 3672], [-20, -25.5, -53.5, -85.8, -72.2].dbamp, [20, 10, 7, 4]],
+        ], exc, freq/530) * amp;
+        sig = sig * SinOsc.kr(5 * Rand(0.9, 1.2), [0, pi * Rand(0.9, 1.1)]).range(0.3, 1);
+
+        DetectSilence.ar(sig, doneAction: Done.freeSelf);
+        Balance2.ar(sig[0], sig[1], pan);
+        Out.ar(out, sig);
+    }).add;
+
     SynthDef(\fx, {
         var sig;
         sig = In.ar(\out.kr(0), 2);
@@ -227,6 +249,15 @@ var metro, beatDur;
 
 metro = TempoClock.default;
 metro.tempo = 1;
+
+patterns = [
+    (type: \notes, pan: -0.5, \notes: [0, \, \]),
+    (type: \notes, pan: 0.5, \notes: [0, \, 3, 2, \, \, 0]),
+    (type: \random, pan: 0, \notes: (2..10) ++ (\).dup(10)),
+    (type: \bowl, \notes: (0..12) + 12)
+];
+
+s = Server.default;
 Synth.tail(s, \fx);
 
 scale = Scale.lydian.semitones;
@@ -264,108 +295,117 @@ patterns.do { |data, i|
         var time, freq, amp, pos, duration, pan;
         var pointCount, amplitudes;
 
-        if (data.type == \perc) {
-            data.triggers.do { |trigger|
-                if ((trigger != \) && (trigger.coin)) { s.makeBundle(s.latency, {data.synthVar.set(\trigger, 1)}) };
-                0.5.yield; // 8th notes
-            };
-        };
-
-        if(data.type == \notes) { data.notes.do { |note|
-            if (note != \) {
-                time = [1,2,3,4].wchoose([1, 3, 2, 1.5].normalizeSum) * 0.5;
-                amp = rrand(0.33, 0.9) * 1;
-                pos = rrand(0.6, 0.7);
-                duration = rrand(1.0, 1.5) * time.max(1.0) * 5;
+        switch(data.type,
+            \perc, {
+                data.triggers.do { |trigger|
+                    if ((trigger != \) && (trigger.coin)) { s.makeBundle(s.latency, {data.synthVar.set(\trigger, 1)}) };
+                    0.5.yield; // 8th notes
+                };
+            },
+            \notes, { data.notes.do { |note|
+                if (note != \) {
+                    time = [1,2,3,4].wchoose([1, 3, 2, 1.5].normalizeSum) * 0.5;
+                    amp = rrand(0.33, 0.9) * 1;
+                    pos = rrand(0.6, 0.7);
+                    duration = rrand(1.0, 1.5) * time.max(1.0) * 5;
+                    pan = data.pan + rrand(-0.1, 0.1);
+                    pointCount = 100;
+                    amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
+                    freq = ~degreeToFreq.(note, scale, stringNotes[0]);
+                    s.makeBundle(s.latency, {
+                        ~bassStrings[data.index].set(
+                            \freq, freq,
+                            \amplitudes, amplitudes.drop(1),
+                            \duration, duration,
+                            \pan, pan,
+                            \trigger, 1,
+                            \decay, data.decay,
+                        );
+                    });
+                };
+                time.yield;
+            }},
+            \random, {
+                var intensity;
+                intensity = ~controlBus.getSynchronous;
+                time = rrand(0.4 - (intensity * 0.2), 1.3 - (intensity * 0.7)).max(0.05);
+                time = (time * 8).asInteger / 8.0 + rrand(-0.02, 0.02); // Quantize time to small variations
+                amp = rrand(0.33, 0.9) * 1.5 * time.max(1.0) + (intensity * 0.2);
+                pos = rrand(0.7 + (intensity * 0.15), 0.9);
+                duration = rrand(1.0, 1.5) * time.max(1.0) * 2 - (intensity * 0.25);
                 pan = data.pan + rrand(-0.1, 0.1);
                 pointCount = 100;
                 amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
-                freq = ~degreeToFreq.(note, scale, stringNotes[0]);
-                s.makeBundle(s.latency, {
-                    ~bassStrings[data.index].set(
-                        \freq, freq,
-                        \amplitudes, amplitudes.drop(1),
-                        \duration, duration,
-                        \pan, pan,
-                        \trigger, 1,
-                        \decay, data.decay,
-                    );
-                });
-            };
-            time.yield;
-        }};
-
-        if (data.type == \random) {
-            var intensity;
-            intensity = ~controlBus.getSynchronous;
-            time = rrand(0.4 - (intensity * 0.2), 1.3 - (intensity * 0.7)).max(0.05);
-            time = (time * 8).asInteger / 8.0 + rrand(-0.02, 0.02); // Quantize time to small variations
-            amp = rrand(0.33, 0.9) * 1.5 * time.max(1.0) + (intensity * 0.2);
-            pos = rrand(0.7 + (intensity * 0.15), 0.9);
-            duration = rrand(1.0, 1.5) * time.max(1.0) * 2 - (intensity * 0.25);
-            pan = data.pan + rrand(-0.1, 0.1);
-            pointCount = 100;
-            amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
-            if (data.probability.coin) {
-                var data, note, string, prevNote, shouldSlide;
-                lastNote = if ((0.75).coin, (lastNote + [-3, -2, -1, 0, 1, 2, 3].wchoose([1, 3, 2, 1, 2, 3, 1].normalizeSum)), (2..14).choose).clip(2, 14);
-                note = lastNote + (intensity * 7).asInteger;
-                note = ~degreeToNote.(note, scale, stringNotes[0]);
-                string = fretboard.(note);
-                prevNote = lastPlayedNotes[string];
-                shouldSlide = (prevNote != -1) && (time > 0.5);
-                shouldSlide = shouldSlide && (abs(prevNote - note) > 2) && (abs(prevNote - note) <= 5);
-                shouldSlide = shouldSlide && ((0.02 + (intensity * 0.5)).coin);
-                if (shouldSlide != true)
-                {
-                    s.makeBundle(s.latency, {
-                        ~strings[string].set(
-                            \freq, note.midicps,
-                            \amplitudes, amplitudes.drop(1),
-                            \duration, duration,
-                            \trigger, 1,
-                            \pan, pan,
-                        );
-                    });
-                } {
-                    var slideDuration, noteDuration;
-                    slideDuration = time / abs(prevNote - note);
-                    noteDuration = slideDuration / abs(prevNote - note);
-                    (prevNote..note).do { |currentNote, i|
-                        if (i == 0) {
-                            s.makeBundle(s.latency, {
-                                ~strings[string].set(
-                                    \freq, currentNote.midicps,
-                                    \amplitudes, amplitudes.drop(1),
-                                    \duration, duration,
-                                    \trigger, 1,
-                                    \pan, pan,
-                                );
-                            });
-                        } {
-                            s.makeBundle(s.latency, {
-                                ~strings[string].set(\freq, currentNote.midicps);
-                            });
+                if (data.probability.coin) {
+                    var data, note, string, prevNote, shouldSlide;
+                    lastNote = if ((0.75).coin, (lastNote + [-3, -2, -1, 0, 1, 2, 3].wchoose([1, 3, 2, 1, 2, 3, 1].normalizeSum)), (2..14).choose).clip(2, 14);
+                    note = lastNote + (intensity * 7).asInteger;
+                    note = ~degreeToNote.(note, scale, stringNotes[0]);
+                    string = fretboard.(note);
+                    prevNote = lastPlayedNotes[string];
+                    shouldSlide = (prevNote != -1) && (time > 0.5);
+                    shouldSlide = shouldSlide && (abs(prevNote - note) > 2) && (abs(prevNote - note) <= 5);
+                    shouldSlide = shouldSlide && ((0.02 + (intensity * 0.5)).coin);
+                    if (shouldSlide != true)
+                    {
+                        s.makeBundle(s.latency, {
+                            ~strings[string].set(
+                                \freq, note.midicps,
+                                \amplitudes, amplitudes.drop(1),
+                                \duration, duration,
+                                \trigger, 1,
+                                \pan, pan,
+                            );
+                        });
+                    } {
+                        var slideDuration, noteDuration;
+                        slideDuration = time / abs(prevNote - note);
+                        noteDuration = slideDuration / abs(prevNote - note);
+                        (prevNote..note).do { |currentNote, i|
+                            if (i == 0) {
+                                s.makeBundle(s.latency, {
+                                    ~strings[string].set(
+                                        \freq, currentNote.midicps,
+                                        \amplitudes, amplitudes.drop(1),
+                                        \duration, duration,
+                                        \trigger, 1,
+                                        \pan, pan,
+                                    );
+                                });
+                            } {
+                                s.makeBundle(s.latency, {
+                                    ~strings[string].set(\freq, currentNote.midicps);
+                                });
+                            };
+                            noteDuration.yield;
                         };
-                        noteDuration.yield;
+                        time = time - slideDuration;
+                        "Slide!".postln;
                     };
-                    time = time - slideDuration;
-                    "Slide!".postln;
+                    lastPlayedNotes[string] = note;
                 };
-                lastPlayedNotes[string] = note;
-            };
-            if (intensity <= 0.01) {
-                intensityTriggerChance = intensityTriggerChance + 0.0025;
-                if (intensityTriggerChance.coin) {
-                    s.makeBundle(s.latency, {
-                        Synth(\modulation, [trigger: 1, out: ~controlBus, duration: 10, times: #[0.1, 1]]);
-                    });
-                    "Modulation".postln;
-                    intensityTriggerChance = 0;
+                if (intensity <= 0.01) {
+                    intensityTriggerChance = intensityTriggerChance + 0.0025;
+                    if (intensityTriggerChance.coin) {
+                        s.makeBundle(s.latency, {
+                            Synth(\modulation, [trigger: 1, out: ~controlBus, duration: 10, times: #[0.1, 1]]);
+                        });
+                        "Modulation".postln;
+                        intensityTriggerChance = 0;
+                    };
                 };
-            };
-            time.yield;
-        };
+                time.yield;
+            },
+            \bowl, {
+                var note = scale.performDegreeToKey(data.notes.choose) + root;
+                var time = [1,2,4,8].choose;
+                var pan = exprand(0.5, 1) * [-1, 1].choose;
+                s.bind { // same as s.makeBundle(s.latency, {})
+                    Synth(\bowl, [freq: note.midicps, amp: (-1.5).dbamp, pan: pan]);
+                };
+                time.yield;
+            }
+        );
     }};
 };
 )
