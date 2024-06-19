@@ -1,11 +1,11 @@
 (
 ~setupInOuts = {
     |in=2, out=2|
-	s.options.inDevice_("ASIO : JackRouter");
-	s.options.outDevice_("ASIO : JackRouter");
+    s.options.inDevice_("ASIO : JackRouter");
+    s.options.outDevice_("ASIO : JackRouter");
     s.options.numInputBusChannels_(in);
-	s.options.numOutputBusChannels_(out);
-	s.reboot;
+    s.options.numOutputBusChannels_(out);
+    s.reboot;
 };
 ~setupInOuts.();
 )
@@ -25,7 +25,7 @@ s.waitForBoot {
         var ir, irbuffer, bufsize;
         ~fftsize = 2048;
 
-        irbuffer = Buffer.readChannel(s, "~/Downloads/Ovation_Celebrity_CE44_48000.wav".standardizePath, channels: [0]);
+        irbuffer = Buffer.readChannel(s, (Platform.recordingsDir ++ "/IR/Ovation_Celebrity_CE44_48000.wav").standardizePath, channels: [0]);
         s.sync;
 
         bufsize = PartConv.calcBufSize(~fftsize, irbuffer);
@@ -162,6 +162,20 @@ s.waitForBoot {
         Out.ar(out, sig);
     }).add;
 
+    SynthDef(\pan, {
+        |freq = 440, pan = 0, amp = 0.5|
+        var sig, lfo;
+        sig = Resonz.ar(
+            WhiteNoise.ar()!2 * Env.perc(releaseTime: 0.001).ar(),
+            [300, 440, 600, 700, 900, 1200] / 300 * freq, // * Array.rand(6, 0.05, 0.1).midiratio,
+            Line.ar(0.002, (1 / [1, 0.5, 1.5, 0.8, 0.7, 2]) * 0.001, 0.001).lincurve(0.00001, 0.002, 0.00001, 0.002, [2, 8, 4, 4, 2, 8] * 0.75)
+        );
+        lfo = SinOsc.ar([2, 5, 6, 6.5, 7] * Array.rand(6, 0.99, 1.01), pi/2).range([0.5, 0.66, 0.66, 0.66, 0.8, 0.9], 1);
+        sig = sig * 3000 * amp * [1.0, 0.02, 0.075, 0.05, 0.15, 0.01].squared * lfo;
+        DetectSilence.ar(sig.sum, 0.01, doneAction: Done.freeSelf);
+        Out.ar(\out.ir(0), Splay.ar(sig.scramble, 0.5, center: pan));
+    }).add;
+
     SynthDef(\fx, {
         var sig;
         sig = In.ar(\out.kr(0), 2);
@@ -243,25 +257,19 @@ s.waitForBoot {
 
 (
 var patterns;
-var stringNotes, scale;
+var stringNotes, scale, root;
 var fretboard, lastPlayedNotes, intensityTriggerChance;
 var metro, beatDur;
 
 metro = TempoClock.default;
 metro.tempo = 1;
 
-patterns = [
-    (type: \notes, pan: -0.5, \notes: [0, \, \]),
-    (type: \notes, pan: 0.5, \notes: [0, \, 3, 2, \, \, 0]),
-    (type: \random, pan: 0, \notes: (2..10) ++ (\).dup(10)),
-    (type: \bowl, \notes: (0..12) + 12)
-];
-
 s = Server.default;
 Synth.tail(s, \fx);
 
 scale = Scale.lydian.semitones;
 stringNotes = [40, 45, 50, 55, 59, 64]; // EADGBE
+root = stringNotes[0];
 s.makeBundle(s.latency, {
     ~strings = (stringNotes.size).collect {|i| Synth(\guitarString, [decay: 1.0 / (i+1)]) };
     ~bassStrings = 2.collect{Synth(\guitarString)};
@@ -277,9 +285,11 @@ patterns = [
     (type: \notes, index: 0, decay: 0.5, pan: -0.5, \notes: [12] ++ (\).dup(12)),
     (type: \notes, index: 1, decay: 3.0, pan: 0.5, \notes: [0, \, 3, 2, \, \, 0]),
     (type: \random, pan: 0, probability: 0.5),
-    (type: \perc, synthVar: ~kick,   triggers: [1,\,1,\,1,0.2,1,\] ), // Can't use synth (used internally), use synthName instead
-    (type: \perc, synthVar: ~snare,  triggers: [\,\,1,\,\,\,1,\] ),
-    (type: \perc, synthVar: ~hihat,  triggers: [1,0.75,1,0.33,1,0.75,1,0.33] ),
+    (type: \bowl, notes: (0..12) + 12),
+    (type: \pan, notes: (0..12), probability: 0.75),
+    (type: \perc, synthVar: ~kick,  triggers: [1,\,1,\,1,0.2,1,\] ), // Can't use synth (used internally), use synthVar instead
+    (type: \perc, synthVar: ~snare, triggers: [\,\,1,\,\,\,1,\] ),
+    (type: \perc, synthVar: ~hihat, triggers: [1,0.75,1,0.33,1,0.75,1,0.33] ),
 ];
 
 // Reset control bus value
@@ -401,7 +411,18 @@ patterns.do { |data, i|
                 var time = [1,2,4,8].choose;
                 var pan = exprand(0.5, 1) * [-1, 1].choose;
                 s.bind { // same as s.makeBundle(s.latency, {})
-                    Synth(\bowl, [freq: note.midicps, amp: (-1.5).dbamp, pan: pan]);
+                    Synth(\bowl, [freq: note.midicps, amp: (-12).dbamp, pan: pan]);
+                };
+                time.yield;
+            },
+            \pan, {
+                var time = [1,2,4,8].choose * 0.25;
+                if (data.probability.coin) {
+                    var note = scale.performDegreeToKey(data.notes.choose) + root;
+                    var pan = exprand(0.2, 0.5) * [-1, 1].choose;
+                    s.bind { // same as s.makeBundle(s.latency, {})
+                        Synth(\pan, [freq: note.midicps, amp: (-1.5).dbamp, pan: pan]);
+                    };
                 };
                 time.yield;
             }
