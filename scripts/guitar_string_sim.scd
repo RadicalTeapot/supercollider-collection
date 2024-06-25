@@ -17,20 +17,20 @@ s.newBusAllocators;
 ~controlBus = Bus.control(s, 1);
 
 s.waitForBoot {
+    var fftSize = (2**11).asInteger; // Must be a power of 2
     s.freeAll;
     Buffer.freeAll;
     s.sync;
 
     {
         var ir, irbuffer, bufsize;
-        ~fftsize = 2048;
 
         irbuffer = Buffer.readChannel(s, (Platform.recordingsDir ++ "/IR/Ovation_Celebrity_CE44_48000.wav").standardizePath, channels: [0]);
         s.sync;
 
-        bufsize = PartConv.calcBufSize(~fftsize, irbuffer);
+        bufsize = PartConv.calcBufSize(fftSize, irbuffer);
         ~irspectrum = Buffer.alloc(s, bufsize, 1);
-        ~irspectrum.preparePartConv(irbuffer, ~fftsize);
+        ~irspectrum.preparePartConv(irbuffer, fftSize);
         s.sync;
 
         irbuffer.free; // don't need time domain data anymore, just needed spectral version
@@ -40,7 +40,7 @@ s.waitForBoot {
     s.sync;
 
     SynthDef(\guitarString, {
-        var freq, decay, out, amplitudes, overtones, duration, pan, trigger; // Input variables
+        var freq, decay, out, amplitudes, overtones, duration, pan, trigger, irSpectrumBuf; // Input variables
         var frequencies, fastDecay, slowDecay; // Internal variables
         var sig, fastEnvs, slowEnvs; // UGens
 
@@ -52,6 +52,7 @@ s.waitForBoot {
         pan = \pan.kr(0);
         overtones = \overtones.kr((1..12));
         trigger = \trigger.tr(0);
+        irSpectrumBuf = \irSpectrumBuf.ir(0);
 
         frequencies = freq * overtones * (LFNoise2.kr(1.0 * overtones) * (0.033 * overtones)).midiratio; // Spectral detuning (just for fun ;)), remove to restore proper string sound
         fastDecay = (frequencies.squared * (decay * 4.0 * 10e-7) * -1).exp; // Quadratic damping
@@ -62,7 +63,7 @@ s.waitForBoot {
         slowEnvs = Env.perc(releaseTime: duration * slowDecay).ar(Done.none, trigger) * 0.66;
         sig = sig * amplitudes * (fastEnvs + slowEnvs);
         sig = (sig.sum * 2).tanh * 0.75;
-        sig = sig.blend(PartConv.ar(sig, ~fftsize, ~irspectrum.bufnum, 0.3), 0.2);
+        sig = sig.blend(PartConv.ar(sig, fftSize, irSpectrumBuf, 0.3), 0.2);
         sig = Pan2.ar(sig, pan);
         Out.ar(out, sig);
     }).add;
@@ -184,75 +185,74 @@ s.waitForBoot {
         ReplaceOut.ar(\out.kr(0), sig);
     }).add;
     s.sync;
+};
 
-    ~naiveFFT = {
-        |points, count|
-        count.collect{
-            |i|
-            var real, imag;
-            real = 0;
-            imag = 0;
-            points.do {
-                |v, j|
-                var angle = 2 * pi * i * (j.asFloat / points.size);
-                real = real + (v * cos(angle));
-                imag = imag - (v * sin(angle));
-            };
-            (real.squared + imag.squared).sqrt;
-        }
+~naiveFFT = {
+    |points, count|
+    count.collect{
+        |i|
+        var real, imag;
+        real = 0;
+        imag = 0;
+        points.do {
+            |v, j|
+            var angle = 2 * pi * i * (j.asFloat / points.size);
+            real = real + (v * cos(angle));
+            imag = imag - (v * sin(angle));
+        };
+        (real.squared + imag.squared).sqrt;
+    }
+};
+
+~getPoints = {
+    |pos, count=100|
+    var ipos = (pos * count).asInteger;
+    count.collect({|i| if(i<ipos, i.asFloat/ipos, (count-i).asFloat / (count-ipos)) });
+};
+
+~fretboard = {|notes = #[40, 45, 50, 55, 59, 64], maxFret = 24| // EADGBE tuning
+    var board, noteLookup;
+    var lastUsedString, lastUsedFretColumn, stringPicker;
+
+    board = notes +.t (0..maxFret);
+    noteLookup = (notes[0]..(notes.wrapAt(-1)+maxFret)).collect {|note|
+        var data = [];
+        board.do {|notes, string|
+            var index = notes.indexOf(note);
+            if (index != nil) { data = data.add((string: string, fret: index)) };
+        };
+        data;
     };
 
-    ~getPoints = {
-        |pos, count=100|
-        var ipos = (pos * count).asInteger;
-        count.collect({|i| if(i<ipos, i.asFloat/ipos, (count-i).asFloat / (count-ipos)) });
-    };
-
-    ~fretboard = {|notes = #[40, 45, 50, 55, 59, 64], maxFret = 24| // EADGBE tuning
-        var board, noteLookup;
-        var lastUsedString, lastUsedFretColumn, stringPicker;
-
-        board = notes +.t (0..maxFret);
-        noteLookup = (notes[0]..(notes.wrapAt(-1)+maxFret)).collect {|note|
-            var data = [];
-            board.do {|notes, string|
-                var index = notes.indexOf(note);
-                if (index != nil) { data = data.add((string: string, fret: index)) };
-            };
-            data;
+    lastUsedString = -1;
+    lastUsedFretColumn = 0;
+    stringPicker = {|note|
+        var possiblePositions, bestCandidate;
+        possiblePositions = noteLookup[note - notes[0]];
+        if (lastUsedString == -1) {
+            bestCandidate = possiblePositions.sort({|a, b| a.fret <= b.fret })[0]; // Pick lowest fret
+        } {
+            bestCandidate = possiblePositions.sort({|a, b| abs(a.fret - lastUsedFretColumn) <= abs(b.fret - lastUsedFretColumn) })[0]; // Minimize horizontal movement
         };
 
-        lastUsedString = -1;
-        lastUsedFretColumn = 0;
-        stringPicker = {|note|
-            var possiblePositions, bestCandidate;
-            possiblePositions = noteLookup[note - notes[0]];
-            if (lastUsedString == -1) {
-                bestCandidate = possiblePositions.sort({|a, b| a.fret <= b.fret })[0]; // Pick lowest fret
-            } {
-                bestCandidate = possiblePositions.sort({|a, b| abs(a.fret - lastUsedFretColumn) <= abs(b.fret - lastUsedFretColumn) })[0]; // Minimize horizontal movement
-            };
+        lastUsedString = bestCandidate.string;
+        lastUsedFretColumn = bestCandidate.fret;
 
-            lastUsedString = bestCandidate.string;
-            lastUsedFretColumn = bestCandidate.fret;
-
-            bestCandidate.string;
-        };
-
-        stringPicker;
+        bestCandidate.string;
     };
 
-    ~degreeToNote = {|degree, scale = #[0, 3, 5, 7, 10], root = 40| // Pentatonic minor scale, E2
-        var midinote;
-        midinote = root + scale[degree % scale.size] + (12 * degree.div(scale.size)); // .div is integer division
-        midinote;
-    };
+    stringPicker;
+};
 
-    ~degreeToFreq = {|degree, scale = #[0, 3, 5, 7, 10], root = 40| // Pentatonic minor scale, E2
-        ~degreeToNote.(degree, scale, root).midicps;
-    };
-    s.sync;
-}
+~degreeToNote = {|degree, scale = #[0, 3, 5, 7, 10], root = 40| // Pentatonic minor scale, E2
+    var midinote;
+    midinote = root + scale[degree % scale.size] + (12 * degree.div(scale.size)); // .div is integer division
+    midinote;
+};
+
+~degreeToFreq = {|degree, scale = #[0, 3, 5, 7, 10], root = 40| // Pentatonic minor scale, E2
+    ~degreeToNote.(degree, scale, root).midicps;
+};
 )
 
 (
@@ -271,8 +271,8 @@ scale = Scale.lydian.semitones;
 stringNotes = [40, 45, 50, 55, 59, 64]; // EADGBE
 root = stringNotes[0];
 s.makeBundle(s.latency, {
-    ~strings = (stringNotes.size).collect {|i| Synth(\guitarString, [decay: 1.0 / (i+1)]) };
-    ~bassStrings = 2.collect{Synth(\guitarString)};
+    ~strings = (stringNotes.size).collect {|i| Synth(\guitarString, [decay: 1.0 / (i+1), \irSpectrumBuf: ~irspectrum]) };
+    ~bassStrings = 2.collect{Synth(\guitarString, [\irSpectrumBuf: ~irspectrum])};
     ~kick = Synth(\kick);
     ~snare = Synth(\snare, [pan: 0.2, amp: -16.dbamp, decay: 0.3]);
     ~hihat = Synth(\hihat, [pan: 0.2, amp: -10.dbamp]);
@@ -285,12 +285,72 @@ patterns = [
     (type: \notes, index: 0, decay: 0.5, pan: -0.5, \notes: [12] ++ (\).dup(12)),
     (type: \notes, index: 1, decay: 3.0, pan: 0.5, \notes: [0, \, 3, 2, \, \, 0]),
     (type: \random, pan: 0, probability: 0.5),
-    (type: \bowl, notes: (0..12) + 12),
+    (type: \bowl, notes: (0..12) + 12, amp: -12.dbamp),
     (type: \pan, notes: (0..12), probability: 0.75),
     (type: \perc, synthVar: ~kick,  triggers: [1,\,1,\,1,0.2,1,\] ), // Can't use synth (used internally), use synthVar instead
     (type: \perc, synthVar: ~snare, triggers: [\,\,1,\,\,\,1,\] ),
     (type: \perc, synthVar: ~hihat, triggers: [1,0.75,1,0.33,1,0.75,1,0.33] ),
 ];
+
+~playDrumNote = {
+    |trigger, synthVar|
+    if ((trigger != \) && (trigger.coin)) {
+        s.makeBundle(s.latency, {synthVar.set(\trigger, 1)})
+    };
+    0.5.yield; // 8th notes
+};
+
+~playBassNote = {
+    |note, stringIndex, pan, decay|
+    var time = [1,2,3,4].wchoose([1, 3, 2, 1.5].normalizeSum) * 0.5;
+
+    if (note != \) {
+        var freq, amp, pos, duration, pointCount, amplitudes;
+        amp = rrand(0.33, 0.9) * 1;
+        pos = rrand(0.6, 0.7);
+        duration = rrand(1.0, 1.5) * time.max(1.0) * 5;
+        pan = pan + rrand(-0.1, 0.1);
+        pointCount = 100;
+        amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
+        freq = ~degreeToFreq.(note, scale, stringNotes[0]);
+        s.bind {
+            ~bassStrings[stringIndex].set(
+                \freq, freq,
+                \amplitudes, amplitudes.drop(1),
+                \duration, duration,
+                \pan, pan,
+                \trigger, 1,
+                \decay, decay,
+            );
+        };
+    };
+
+    time.yield;
+};
+
+~playBowl = {
+    |notes, amp|
+    var time = [1,2,4,8].choose;
+    var note = scale.performDegreeToKey(notes.choose) + root;
+    var pan = exprand(0.5, 1) * [-1, 1].choose;
+    s.bind {
+        Synth(\bowl, [freq: note.midicps, amp: amp, pan: pan]);
+    };
+    time.yield;
+};
+
+~playPan = {
+    |notes, probability, amp|
+    var time = [1,2,4,8].choose * 0.25;
+    if (probability.coin) {
+        var note = scale.performDegreeToKey(notes.choose) + root;
+        var pan = exprand(0.2, 0.5) * [-1, 1].choose;
+        s.bind { // same as s.makeBundle(s.latency, {})
+            Synth(\pan, [freq: note.midicps, amp: amp, pan: pan]);
+        };
+    };
+    time.yield;
+};
 
 // Reset control bus value
 s.makeBundle(s.latency, {
@@ -306,35 +366,8 @@ patterns.do { |data, i|
         var pointCount, amplitudes;
 
         switch(data.type,
-            \perc, {
-                data.triggers.do { |trigger|
-                    if ((trigger != \) && (trigger.coin)) { s.makeBundle(s.latency, {data.synthVar.set(\trigger, 1)}) };
-                    0.5.yield; // 8th notes
-                };
-            },
-            \notes, { data.notes.do { |note|
-                if (note != \) {
-                    time = [1,2,3,4].wchoose([1, 3, 2, 1.5].normalizeSum) * 0.5;
-                    amp = rrand(0.33, 0.9) * 1;
-                    pos = rrand(0.6, 0.7);
-                    duration = rrand(1.0, 1.5) * time.max(1.0) * 5;
-                    pan = data.pan + rrand(-0.1, 0.1);
-                    pointCount = 100;
-                    amplitudes = ~naiveFFT.(~getPoints.(pos, pointCount) * amp, 13) / pointCount;
-                    freq = ~degreeToFreq.(note, scale, stringNotes[0]);
-                    s.makeBundle(s.latency, {
-                        ~bassStrings[data.index].set(
-                            \freq, freq,
-                            \amplitudes, amplitudes.drop(1),
-                            \duration, duration,
-                            \pan, pan,
-                            \trigger, 1,
-                            \decay, data.decay,
-                        );
-                    });
-                };
-                time.yield;
-            }},
+            \perc, { data.triggers.do { |trigger| ~playDrumNote.(trigger, data.synthVar) } },
+            \notes, { data.notes.do { |note| ~playBassNote.(note, data.index, data.pan, data.decay) }},
             \random, {
                 var intensity;
                 intensity = ~controlBus.getSynchronous;
@@ -406,26 +439,8 @@ patterns.do { |data, i|
                 };
                 time.yield;
             },
-            \bowl, {
-                var note = scale.performDegreeToKey(data.notes.choose) + root;
-                var time = [1,2,4,8].choose;
-                var pan = exprand(0.5, 1) * [-1, 1].choose;
-                s.bind { // same as s.makeBundle(s.latency, {})
-                    Synth(\bowl, [freq: note.midicps, amp: (-12).dbamp, pan: pan]);
-                };
-                time.yield;
-            },
-            \pan, {
-                var time = [1,2,4,8].choose * 0.25;
-                if (data.probability.coin) {
-                    var note = scale.performDegreeToKey(data.notes.choose) + root;
-                    var pan = exprand(0.2, 0.5) * [-1, 1].choose;
-                    s.bind { // same as s.makeBundle(s.latency, {})
-                        Synth(\pan, [freq: note.midicps, amp: (-1.5).dbamp, pan: pan]);
-                    };
-                };
-                time.yield;
-            }
+            \bowl, { ~playBowl.(data.notes, data.amp) },
+            \pan, { ~playPan.(data.notes, data.probability, 1) }
         );
     }};
 };

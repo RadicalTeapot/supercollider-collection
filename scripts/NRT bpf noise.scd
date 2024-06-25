@@ -1,24 +1,21 @@
 (
 var score, server;
-server = Server(\nrt,
-    options: ServerOptions.new
-    .numOutputBusChannels_(2)
-);
+server = Server(\nrt, options: ServerOptions.new.numOutputBusChannels_(2));
 
 score = Score([
     [0.0, ['/d_recv', SynthDef(\NRTnoise, {
-        arg t_gate;
-        var sig, env, out;
+        var sig, freq, out;
         sig = WhiteNoise.ar();
-        env = EnvGen.ar(Env.new([0,1], [1]), t_gate, doneAction:Done.freeSelf);
-        sig = BPF.ar(sig, env*19990+10, 0.1); // Start at 10Hz to avoid discontinuities due to BPF implementation
-        Out.ar(0, sig.dup)
+        freq = Line.ar(10, 20000, 1, doneAction: Done.freeSelf);
+        sig = BPF.ar(sig, freq, 0.1);
+        sig = Pan2.ar(sig, 0);
+        Out.ar(0, sig);
     }).asBytes]],
-    [0.0, (x = Synth.basicNew(\NRTnoise, server, 1000)).newMsg(args: [\t_gate, 1])],
+    [0.0, (x = Synth.basicNew(\NRTnoise, server, 1000)).newMsg],
 ]);
 
 score.recordNRT(
-    outputFilePath: "~/AppData/Local/_data/Supercollider/recordings/noise.wav".standardizePath,
+    outputFilePath: (Platform.recordingsDir++"\\noise.wav").standardizePath,
     headerFormat: "wav",
     sampleFormat: "int16",
     options: server.options,
