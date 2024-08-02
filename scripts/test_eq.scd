@@ -2,6 +2,14 @@
 s = Server.default;
 
 s.waitForBoot({
+    var sigA, bufA;
+    var rhythms;
+    Buffer.freeAll;
+    s.sync;
+
+    sigA = Signal.sineFill(513, [1], [0]);
+    bufA = Buffer.loadCollection(s, sigA.asWavetableNoWrap);
+
     SynthDef(\kick, {
         var trigger, freq, amp, decay, pan, out;
         var env, fmEnv, osc, sig;
@@ -110,6 +118,26 @@ s.waitForBoot({
         Out.ar(0, Splay.ar(sig.scramble, LFNoise2.kr(0.1).range(0.5, 1.0)));
     }).add;
 
+    SynthDef(\otherDrone, {
+        |freq=200, amp=1|
+        var detune, dur, blend, p, sig;
+        detune = freq.lag(0.1) * LFNoise2.ar(3!2).bipolar(0.2).midiratio;
+        dur = (2*detune).reciprocal;
+        blend = LFNoise2.kr(2!2).range(1,4);
+        // NOTE: Using an EnvGen still results in a small discontinuity when it loops,
+        // I could not get rid of it completely but it's not noticable as long as we don't
+        // expect to get a pure sine tone out of it when blend = 0
+        p = EnvGen.ar(Env([-1,-1,0,1], [0,dur,dur], [0,blend,-1 * blend]), Impulse.ar(detune));
+        sig = Shaper.ar(bufA, p).tanh * -2.dbamp;
+        sig = MoogFF.ar(sig, 2 * freq * LFNoise2.kr(3!2).bipolar(2).midiratio);
+        sig = sig.blend(HPF.ar(PinkNoise.ar(1!2), 3000), 0.03);
+        sig = LeakDC.ar(sig) * (FSinOsc.ar(LFNoise2.ar(0.5!2).range(2, 15)).range(0.5, 0.75) + 0.25);
+        sig = sig.blend(NHHall.ar(sig, 3), 0.2);
+        sig = sig * -24.dbamp;
+        sig = AnalogVintageDistortion.ar(sig, 0.5, 0.1, lowgain: 0.2) * amp; // Be careful with this, it tends to blow up!
+        Out.ar(0, sig);
+    }).add;
+
     SynthDef(\spectralFx, {
         var sig, out;
         var size = 128; // FFT size
@@ -146,7 +174,7 @@ s.bind {
     ~kick = Synth(\kick);
     ~snare = Synth(\snare, [pan: 0.2, amp: -16.dbamp, decay: 0.3]);
     ~hihat = Synth(\hihat, [pan: 0.2, amp: -10.dbamp]);
-    ~drone = Synth(\drone, [freq: (root-12).midicps, amp: -3.dbamp]);
+    ~drone = Synth(\otherDrone, [freq: (root-12).midicps, amp: -12.dbamp]);
 
     ~spectral = Synth.tail(s, \spectralFx);
     ~fx = Synth.tail(s, \fx);
@@ -162,7 +190,8 @@ patterns = [
         [0.25,0.25,0.5,\,\,\],
         [0.25,0.25,\,0.5,0.5,0.5,\],
         \,
-    ], percPatternsWeight: [3, 2, 1, 1].normalizeSum)
+        ], percPatternsWeight: [3, 2, 1, 1].normalizeSum),
+    (type: \drone, degrees: (0..5)),
 ];
 
 ~playDrumNote = {
@@ -203,11 +232,22 @@ patterns = [
     } };
 };
 
+~playDrone = {
+    |degrees, scale = (Scale.lydian.semitones), root=52|
+    var time = [1,2,4,8].choose * 4;
+    var note = scale.performDegreeToKey(degrees.choose) + root;
+    var offset = exprand(0.005, 0.02);
+    offset.yield;
+    s.bind { ~drone.set(\freq, note.midicps) };
+    (time - offset).yield;
+};
+
 patterns.do{|pattern|
     switch(pattern.type,
         \perc, { { loop { pattern.triggers.do { |trigger| ~playDrumNote.(trigger, pattern.synthVar, rrand(pattern.amp[0], pattern.amp[1])) } } }.fork(metro) },
         \bowl, { { loop { ~playBowl.(pattern.degrees, rrand(pattern.amp[0], pattern.amp[1]), [0, 4, 6, 9, 11], root); } }.fork(metro) },
         \pan, { { loop { ~playPan.(pattern.degrees, pattern.probability, 1, pattern.percPatterns, pattern.percPatternsWeight, Scale.lydian.semitones, root); } }.fork(metro) },
+        \drone, { { loop { ~playDrone.(pattern.degrees, [0, 4, 6, 9, 11], root-12); } }.fork(metro) }
     );
 };
 
