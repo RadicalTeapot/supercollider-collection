@@ -13,8 +13,8 @@ win = Window(bounds: Rect(500, 250, 100, 80)).alwaysOnTop_(true);
 nb = NumberBox()
 .string_(toMidiNoteString.(note))
 .keyDownAction_({|view, char, modifiers, unicode, keycode, key|
-    if (keycode == 38) {note = note+1};
-    if (keycode == 40) {note = note+1};
+    if (keycode == 38) {note = note+1}; // Up arrow
+    if (keycode == 40) {note = note-1}; // Down arrow
     note = note.clip(0, 127);
     view.string_(toMidiNoteString.(note.asInteger));
 })
