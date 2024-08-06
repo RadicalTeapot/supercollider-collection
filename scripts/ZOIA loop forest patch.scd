@@ -11,6 +11,7 @@ s.waitForBoot {
     mixOutBus = Bus.audio(s, 2);
     s.sync;
 
+    // TODO Use a variable size looper (see KPM notes)
     SynthDef(\looper, {
         var in = \in.ir(0);
         var out = \out.ir(0);
