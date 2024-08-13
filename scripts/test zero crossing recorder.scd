@@ -16,7 +16,7 @@ s.waitForBoot {
         sig = LPF.ar(sig, 250);
         sig = sig * env * amp;
         // Out.ar(out, Mix(sig));
-        Out.ar(out, Splay.ar(sig, 0.33, center: LFNoise2.kr(noteFreq * 0.8979).bipolar(0.5)));
+        Out.ar(out, Splay.ar(sig, 0.5, center: LFNoise2.kr(noteFreq * 0.8979).bipolar(0.5)));
     }).add;
 
     SynthDef(\zeroCrossingRecorder, {
@@ -37,6 +37,7 @@ s.waitForBoot {
         // Latch on all crossings (the last value will be the last crossing)
         var lastCrossing = Latch.ar(phasor, cross);
 
+        // Notify at the end of the recording
         SendReply.ar(end, '/crossings', [firstCrossing, lastCrossing]);
         BufWr.ar(sig, buf, phasor);
         FreeSelf.kr(end);
@@ -133,13 +134,13 @@ fork {
 
     notes = Synth(\testNotes, [out: bus, root: 60]);
     looper = Synth.tail(s, \zeroCrossingLooper, [in: bus, buf: buf, amp: 1]);
-    // Synth.tail(s, \fx, [revbDW: 0.2]);
+    Synth.tail(s, \fx, [revbDW: 0.2]);
 
     Routine {
         inf.do {
             var time = rrand(2.0, 3.5);
             s.bind {
-                notes.set(\noteFreq, rrand(1.5, 3.0) * 2);
+                notes.set(\noteFreq, rrand(1.5, 3.0));
                 looper.set(\rec, 1);
             };
             "Rec".postln;

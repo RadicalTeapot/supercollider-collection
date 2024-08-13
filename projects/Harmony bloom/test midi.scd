@@ -4,12 +4,13 @@ s.waitForBoot {
     ~midi = MIDIOut.newByName("loopMIDI Port", "loopMIDI Port");
     ~midiChannel = 0;
 
-    ~hs = HarmonySequencer.new(s);
+    ~hs = HarmonySequencer(s);
     ~hs.gui(30, true);
 }
 )
 
 (
+~midiNoteDuration = 0.1;
 ~hs.registerPointTriggerAction({ |pointIdx, note|
     fork {
         ~midi.noteOn(~midiChannel, note);
