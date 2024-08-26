@@ -1,4 +1,5 @@
 (
+s = ~useJACK.(2, 2);
 s.waitForBoot {
     var looperCount, looperBuffers, looperBuses, mixOutBus, delayBuf, mixer, fx;
     var mixValues;
@@ -7,7 +8,7 @@ s.waitForBoot {
     s.newBusAllocators;
     s.sync;
 
-    looperCount = 16; // Original patch value was 4
+    looperCount = 8; // Original patch value was 4
     looperBuffers = looperCount.collect { Buffer.alloc(s, 16 * s.sampleRate) };
     delayBuf = Buffer.alloc(s, s.sampleRate, 2);
     looperBuses = looperCount.collect { Bus.audio(s, 2) };
@@ -36,6 +37,7 @@ s.waitForBoot {
         var readPhasorSpeedLfoFreq = \readPhasorSpeedLfoFreq.kr(0.1);
         var recGateDurationLfoFreq = \recGateDurationLfoFreq.kr(10);
         var fadeTime = \fadeTime.kr(0.02);
+        var minDuration = \minDuration.kr(0.02).max(2 * fadeTime);
 
         var input = SoundIn.ar(in);
         var localIn = LocalIn.ar(2);
@@ -53,8 +55,8 @@ s.waitForBoot {
         var ampLfo = VarSaw.kr(ampLfoFreq).unipolar.lincurve(0, 1, minAmp, maxAmp).clip(0, 1);
 
         var recTrig = Impulse.ar(recLfoFreq);
-        var gateDuration = SinOsc.ar(recGateDurationLfoFreq).range(4 * fadeTime, bufDur.min((2*recLfoFreq).reciprocal)); // 16 is buf duration
-        var recGate = Trig1.ar(recTrig, gateDuration); // Get duration is held until the next trigger so we can use a sine here
+        var gateDuration = SinOsc.ar(recGateDurationLfoFreq).range(minDuration, bufDur.min((2*recLfoFreq).reciprocal));
+        var recGate = Trig1.ar(recTrig, gateDuration); // Get duration is held until the next trigger so we can use a sine here (i.e. a latch is not needed)
         var readGate = 1 - recGate;
 
         var lastFrame = Latch.ar(phasorFeedback, readGate);
@@ -77,7 +79,7 @@ s.waitForBoot {
         sig = Pan2.ar(sig, panLfo);
 
         LocalOut.ar([K2A.ar(startPosLfo), recPhasor]);
-        SendReply.kr(Impulse.kr(refreshRate), '/update', [id, recGate, loopPoint / bufFrames, readPhasor / bufFrames, recPhasor / bufFrames, amp, panLfo.unipolar, Amplitude.kr(sig.sum, 0.01, 0.1)]);
+        SendReply.kr(Impulse.kr(refreshRate), '/updateGUI', [id, recGate, loopPoint / bufFrames, readPhasor / bufFrames, recPhasor / bufFrames, amp, panLfo.unipolar, (Amplitude.kr(sig.sum, 0.1, 0.5).lag(0.1) * 30).clip(0, 1)]);
         Out.ar(out, sig);
     }).add;
 
@@ -85,7 +87,7 @@ s.waitForBoot {
         var inputs = \inputs.ir(Array.series(looperCount));
         var levels = \levels.kr(Array.fill(looperCount, 1));
         var out = \out.ir(0);
-        var sig = Mix(inputs.collect({ |v| In.ar(v, 2) })) * levels;
+        var sig = Mix(inputs.collect({ |v| In.ar(v, 2) }) * levels);
         Out.ar(out, sig);
     }).add;
 
@@ -128,13 +130,6 @@ s.waitForBoot {
     }).add;
     s.sync;
 
-    // Original patch values
-    // recLfoFreqs = [0.02, 0.04, 0.04, 0.13].linexp(0, 1, 0.05, 20000); // Remap from 0 to 1 to ZOIA LFO freq values (double check if that matches)
-    // startPosLfoFreqs = [0.05, 0.05, 0.02, 0.03].linexp(0, 1, 0.05, 20000);
-    // reverseLfoFreqs = [0.03, 0.06, 0.06, 0.07].linexp(0, 1, 0.05, 20000);
-    // panLfoFreqs = [0.06, 0.12, 0.1, 0.11].linexp(0, 1, 0.05, 20000);
-    // mixValues = [0.53, 0.54, 0.27, 0.29];
-    // phasorSpeedLfoFreqs = [0.05, 0.066, 0.08, 0.13].linexp(0, 1, 0.05, 20000);
     looperCount.do {|i|
         var recLfoFreq = exprand(0.01, 0.2);
         var reverseLfoFreq = exprand(0.08, 0.2);
@@ -158,12 +153,13 @@ s.waitForBoot {
             ampLfoFreq: ampLfoFreq,
             maxAmp: 0.dbamp,
             minAmp: -18.dbamp,
+            minDuration: 0.5,
         ]);
     };
 
     mixValues = Array.fill(looperCount, 1);
-    mixer = Synth.tail(s, \mixer, [inputs: looperBuses, levels: mixValues, out: mixOutBus]);
-    fx = Synth.tail(s, \fx, [in: mixOutBus, out: 0, buf: delayBuf]);
+    mixer = Synth.tail(s, \mixer, [inputs: looperBuses, levels: mixValues/*, out: mixOutBus*/]);
+    // fx = Synth.tail(s, \fx, [in: mixOutBus, out: 0, buf: delayBuf]);
 
     AppClock.sched(0, {
         var
@@ -175,7 +171,7 @@ s.waitForBoot {
         pans = Array.fill(looperCount, 0),
         amplitudes = Array.fill(looperCount, 0);
 
-        var bounds = Rect(1200, 50, 600, 900);
+        var bounds = Rect(1200, 50, 600, 400);
         var userViews = looperCount.collect({ |i|
             var level = ObservableParameter(mixValues[i], set: {|value| value.clip(0.0, 1.0)});
             var enabled = ObservableParameter(1, set: {|value| value.asInteger});
@@ -278,7 +274,7 @@ s.waitForBoot {
                 v[i] = msg[4+j];
             };
             defer { userViews[i].refresh };
-        }, '/update');
+        }, '/updateGUI');
     });
 };
 )
