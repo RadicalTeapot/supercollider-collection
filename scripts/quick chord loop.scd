@@ -1,12 +1,12 @@
 (
 CmdPeriod.run;
 s.waitForBoot {
-    var looperCount, looperBuffers, inGroup, looperGroup, fxGroup, delayBuf;
+    var looperCount, looperBuffers, inGroup, looperGroup, fxGroup, postFxGroup, delayBuf;
     var replyName = '/trigger';
     var root = 36;
     var notes = [0, 12, 19, 24, 28, 31, 38, 48 ]; // Add9
     var freqs = [8, 4, 2, 2, 1, 1, 1, 1].reciprocal;
-    looperCount = 8; // Original patch value was 4
+    looperCount = 8;
     Buffer.freeAll;
     s.sync;
 
@@ -14,6 +14,7 @@ s.waitForBoot {
     inGroup = Group.new;
     looperGroup = Group.after(inGroup);
     fxGroup = Group.after(looperGroup);
+    postFxGroup = Group.after(fxGroup);
     delayBuf = Buffer.alloc(s, s.sampleRate * 2, 2);
     s.sync;
 
@@ -32,7 +33,120 @@ s.waitForBoot {
         Out.ar(\out.ir(0), sig);
     }).add;
 
-    // Could use SynthDef.wrap to break this down into smaller SynthDefs (i.e. one responsible for recording and one for playing)
+    SynthDef(\bass, {
+        var freq = \freq.kr(440).max(0);
+        var cf = \cf.kr(20000).clip(20, 20000);
+        var atk = \atk.kr(0.01).max(0);
+        var rel = \rel.kr(1).max(0);
+        var dur = \dur.kr(1).max(0);
+        var filtAtk = \filtAtk.kr(0.01).max(0);
+        var filtRel = \filtRel.kr(1).max(0);
+        var filtEnvAmp = \filtEnvAmp.kr(0).max(0);
+        var rq = \rq.kr(1).clip(0.0001, 1);
+        var satBlend = \satBlend.kr(0.5).clip(0, 1);
+        var pan = \pan.kr(0).clip(-1, 1);
+        var harmonicsAmp = \harmonicsAmp.kr(0.5);
+        var subOctave = \subOctave.kr(1).max(1);
+        var amp = \amp.kr(0.5).max(0);
+        var out = \out.ir(0);
+
+        var sig = Saw.ar(freq) * harmonicsAmp;
+        var sub = SinOsc.ar(freq * 2.pow(subOctave).reciprocal);
+        var cfEnv = Env.perc(filtAtk, filtRel, filtEnvAmp).kr(timeScale: dur);
+        var filtAmp = (rq+1).reciprocal.sqrt;
+        sig = RLPF.ar(sig, (cf + cfEnv).clip(20, 20000), rq) * filtAmp;
+        sig = sig + sub;
+        sig = sig.blend((sig*2).tanh, satBlend);
+        sig = sig * Env.perc(atk, rel).ar(timeScale: dur);
+        sig = Pan2.ar(sig, pan) * amp;
+        DetectSilence.ar(sig, doneAction: Done.freeSelf);
+        Out.ar(out, sig);
+    }).add;
+
+    SynthDef(\arp, {
+        var freq = \freq.kr(440).max(20);
+        var cf = \cf.kr(20000).clip(20, 20000);
+        var atk = \atk.kr(0.01).max(0);
+        var rel = \rel.kr(1).max(0);
+        var dur = \dur.kr(1).max(0);
+        var rq = \rq.kr(1).clip(0.0001, 1);
+        var pan = \pan.kr(0).clip(-1, 1);
+        var amp = \amp.kr(0.5).max(0);
+        var delayBlend = \delayBlend.kr(0.2).clip(0, 1);
+        var decayTime = \decaytime.kr(5);
+        var out = \out.ir(0);
+
+        var sig = VarSaw.ar(freq);
+        var filtAmp = (rq+1).reciprocal.sqrt;
+        sig = BPF.ar(sig, cf, rq) * filtAmp;
+        sig = sig * Env.perc(atk, rel).ar(timeScale: dur);
+        sig = Pan2.ar(sig, pan);
+        sig = sig.blend(CombL.ar(sig, dur/2, dur/2, decayTime).rotate, delayBlend);
+        sig = LeakDC.ar(sig);
+        sig = sig * amp;
+        DetectSilence.ar(sig, time: 1, doneAction: Done.freeSelf);
+        Out.ar(out, sig);
+    }).add;
+
+    SynthDef(\kick, {
+        var freq, amp, decay, pan, out;
+        var env, fmEnv, osc, sig;
+
+        freq = \freq.kr(32.7); // C1
+        amp = \amp.kr(-6.dbamp);
+        decay = \decay.kr(0.5);
+        pan = \pan.kr(0);
+        out = \out.ir(0);
+
+        env = Env.perc(releaseTime: decay).ar(Done.freeSelf);
+        fmEnv = Env.perc(releaseTime: decay).kr(timeScale: 0.4).range(0.9, 1.1);
+        osc = SinOsc.ar(freq * fmEnv);
+        sig = osc * env;
+        sig = Pan2.ar(sig, pan) * amp;
+
+        Out.ar(out, sig);
+    }).add;
+
+    SynthDef(\snare, {
+        var freq, bpfFreq, amp, decay, pan, out;
+        var env, noise, osc, sig;
+
+        freq = \freq.kr(130.8); // C3
+        bpfFreq = \bpfFreq.kr(261.6); // C5
+        amp = \amp.kr(-6.dbamp);
+        decay = \decay.kr(0.2);
+        pan = \pan.kr(0);
+        out = \out.ir(0);
+
+        env = Env.perc(releaseTime: decay).ar(Done.freeSelf);
+        noise = WhiteNoise.ar();
+        osc = SinOsc.ar(freq);
+        sig = noise + (osc * -3.dbamp);
+        sig = BPF.ar(sig, bpfFreq) * env;
+        sig = Pan2.ar(sig, pan) * amp;
+
+        Out.ar(out, sig);
+    }).add;
+
+    SynthDef(\hihat, {
+        var hpfFreq, amp, decay, pan, out;
+        var env, noise, hpf, sig;
+
+        hpfFreq = \hpfFreq.kr(8000);
+        amp = \amp.kr(-6.dbamp);
+        decay = \decay.kr(0.1);
+        pan = \pan.kr(0);
+        out = \out.ir(0);
+
+        env = Env.perc(releaseTime: decay).ar(Done.freeSelf);
+        noise = WhiteNoise.ar();
+        hpf = HPF.ar(noise, 8000);
+        sig = hpf * env;
+        sig = Pan2.ar(sig, pan) * amp;
+
+        Out.ar(0, sig);
+    }).add;
+
     SynthDef(\varLooper, {
         var sig;
 
@@ -112,11 +226,11 @@ s.waitForBoot {
         var rev = NHHall.ar(sig, 4, 0.15);
 
         // Back to tape delay with some hiss, crackles and saturation
-        var tapeCrackle = BPF.ar(PinkNoise.ar(1!2) * WhiteNoise.ar(1!2), 2000, 0.75) * LFNoise2.kr(0.5!2).linlin(-1, 1, -24.dbamp, -12.dbamp);
+        var tapeCrackle = BPF.ar(PinkNoise.ar(1!2) * WhiteNoise.ar(1!2), 2000, 0.75) * LFNoise2.kr(0.5!2).linlin(-1, 1, -36.dbamp, -24.dbamp);
         var tapeHiss = BPF.ar(PinkNoise.ar(1!2), LFNoise1.kr(2.3587!2).linlin(-1, 1, 2000, 4000), 0.95);
-        sig = sig.blend(tapeHiss, 0.05) + tapeCrackle;
         sig = sig.tanh;
         RecordBuf.ar(LPF.ar(HPF.ar(sig, 50), 10000), buf, recLevel: 1, preLevel: -36.dbamp);
+        sig = sig.blend(tapeHiss, 0.025) + tapeCrackle;
 
         sig = sig.blend(rev, 0.5);
         sig = Compander.ar(sig, sig, 0.4, 1, 5.reciprocal, 0.005, 0.5);
@@ -126,12 +240,58 @@ s.waitForBoot {
 
     OSCFunc({|msg|
         var index = msg[3].asInteger;
-        s.bind { Synth(\pulse, [freq: (root + notes[index]).midicps, atk: rrand(1.0, 5.0), rel: (index+1).reciprocal*rrand(10.0, 20.0), cf: exprand(200, 2000), amp: (index/8+1).reciprocal, pan: rrand(-1.0, 1.0), width: exprand(0.5, 0.95)], inGroup) };
+        s.bind { Synth(\pulse, [freq: (root + notes[index]).midicps, atk: rrand(1.0, 5.0), rel: (index+1).reciprocal*rrand(10.0, 20.0), cf: exprand(200, 2000), amp: (index/8+1).reciprocal * 0.25, pan: rrand(-1.0, 1.0), width: exprand(0.5, 0.95)], inGroup) };
     }, replyName);
 
     s.bind { notes.do { |note, i|
         Synth(\triggerer, [freq: (freqs[i] + rrand(-0.01, 0.01)) * 0.03, id: i, phase: exprand(0.001, 1.0)]);
     }};
+
+    // Play bass
+    Routine {
+        var note = 48;
+        var waitTime = 16;
+        loop {
+            s.bind { Synth(\bass, [freq: note.midicps, cf:40, rq: 0.5, atk: 0.25, filtAtk: 0.5, filtEnvAmp: 100, dur: waitTime, amp: -20.dbamp], postFxGroup) };
+            waitTime.yield;
+        };
+    }.play;
+
+    // Play arp
+    Routine {
+        var getNotes = {|root=36, count=6|
+            ([0, 12, 24] +.x Scale.majorPentatonic.semitones).scramble[0..count] + root;
+        };
+
+        var cf = 200;
+        var amp = -12;
+        var notes = getNotes.();
+        var waitTime = 1/3;
+        loop {
+            cf = (cf + (exprand(10, 200) * [-1, 1].choose)).clip(20, 400);
+            amp = (amp + (exprand(0.5, 2) * [-1, 1].choose)).clip(-48, -12);
+            notes.do { |note|
+                s.bind { Synth(\arp, [freq: note.midicps, cf: cf, dur: waitTime*4/3, amp: amp.dbamp], postFxGroup) };
+                waitTime.yield;
+            };
+            if (0.05.coin) { notes = getNotes.() };
+            if (0.15.coin) { notes = notes.rotate(rrand(-3, 3)) };
+        }
+    }.play;
+
+    // Play drums
+    Routine {
+        var beat = 0;
+        loop {
+            s.bind {
+                if ((beat == 0) || (beat == 4) || (beat == 7)) { Synth(\kick, [amp: -6.dbamp], target: postFxGroup) };
+                if ((beat == 2) || (beat == 6)) { Synth(\snare, [amp: -18.dbamp], target: postFxGroup) };
+                Synth(\hihat, [amp: -30.dbamp], target: postFxGroup);
+            };
+            beat = (beat + 1) % 8;
+            0.5.yield;
+        }
+    }.play;
 
     looperCount.do {|i|
         var recLfoFreq = exprand(0.01, 0.2);
@@ -153,72 +313,10 @@ s.waitForBoot {
             panLfoFreq: panLfoFreq,
             readPhasorSpeedLfoFreq: phasorSpeedLfoFreq,
             ampLfoFreq: ampLfoFreq,
-            maxAmp: 0.dbamp,
-            minAmp: -18.dbamp,
+            maxAmp: -12.dbamp,
+            minAmp: -36.dbamp,
         ], looperGroup);
     };
     Synth.tail(fxGroup, \fx, [out: 0, buf: delayBuf]);
-
-    /*AppClock.sched(0, {
-        var
-        recGates = Array.fill(looperCount, 0),
-        normalizedLoopPoints = Array.fill(looperCount, 0),
-        readPositions = Array.fill(looperCount, 0),
-        recPositions = Array.fill(looperCount, 0),
-        amps = Array.fill(looperCount, 0),
-        pans = Array.fill(looperCount, 0);
-
-        var bounds = Rect(500, 500, 500, 500);
-        var window = Window(bounds: bounds)
-        .alwaysOnTop_(true)
-        .onClose_({CmdPeriod.run})
-        .front
-        .background_(Color.white)
-        .drawFunc_({
-            looperCount.do { |i|
-                var width = bounds.width;
-                var height = bounds.height / looperCount;
-                var y = height * i;
-                Pen.width = 2;
-                Pen.strokeColor = Color.black;
-                if (recGates[i].asInteger == 1) {
-                    Pen.fillColor = Color(1, 0.66, 0.66); // Light red
-                } {
-                    Pen.fillColor = Color(0.66, 1, 0.66); // Light green
-                };
-                Pen.addRect(Rect(2, y+2, (width-4) * normalizedLoopPoints[i], height-4));
-                Pen.fillStroke;
-
-                if (recGates[i].asInteger == 0) {
-                    var x = readPositions[i] * width;
-                    var size = (amps[i]*5+1);
-                    Pen.width = size;
-                    Pen.strokeColor = Color(0, 0.5, 0);
-                    Pen.moveTo(x@(y+3));
-                    Pen.lineTo(x@(y+height-3));
-                    Pen.stroke;
-                    Pen.strokeColor = Color.black;
-                    Pen.fillColor = Color.black;
-                    Pen.addArc(x@(y+(pans[i]*(height-20)+10)), size, 0, 2pi);
-                    Pen.fillStroke;
-                } {
-                    var x = recPositions[i] * width;
-                    Pen.width = 2;
-                    Pen.strokeColor = Color(0.5, 0, 0);
-                    Pen.moveTo(x@(y+3));
-                    Pen.lineTo(x@(y+height-3));
-                    Pen.stroke;
-                };
-            }
-        });
-
-        OSCFunc({ |msg|
-            var i = msg[3].asInteger;
-            [recGates, normalizedLoopPoints, readPositions, recPositions, amps, pans].do { |v, j|
-                v[i] = msg[4+j];
-            };
-            defer { window.refresh };
-        }, '/update');
-    });*/
 };
 )
