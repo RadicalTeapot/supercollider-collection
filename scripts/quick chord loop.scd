@@ -1,13 +1,17 @@
 (
 CmdPeriod.run;
 s.waitForBoot {
-    var looperCount, looperBuffers, inGroup, looperGroup, fxGroup, postFxGroup, delayBuf;
+    var looperCount, looperBuffers, inGroup, looperGroup, fxGroup, postFxGroup, delayBuf, hitBufs, gongBufs;
+    var audioBuses, levelBuses;
+    var mixStrip = "utils/mix strip.scd".resolveRelative.load;
     var replyName = '/trigger';
     var root = 36;
     var notes = [0, 12, 19, 24, 28, 31, 38, 48 ]; // Add9
     var freqs = [8, 4, 2, 2, 1, 1, 1, 1].reciprocal;
     looperCount = 8;
+
     Buffer.freeAll;
+    s.newBusAllocators;
     s.sync;
 
     looperBuffers = looperCount.collect { Buffer.alloc(s, 16 * s.sampleRate) };
@@ -16,24 +20,50 @@ s.waitForBoot {
     fxGroup = Group.after(looperGroup);
     postFxGroup = Group.after(fxGroup);
     delayBuf = Buffer.alloc(s, s.sampleRate * 2, 2);
+    hitBufs = 3.collect { |i|
+        Buffer.read(s, "C:/Users/Mathias/AppData/Local/_data/Recordings/Cleaned/wood hits/Hit"+(i+1)+"clean.wav");
+    };
+    gongBufs = ["Hit hard - F2", "Regular hit - F2", "Ring long - F2"].collect {|name| Buffer.read(s, "C:/Users/Mathias/AppData/Local/_data/Recordings/Cleaned/gong/thai gong/"++name++".wav") };
     s.sync;
 
     SynthDef(\triggerer, {
-        var rate = \freq.kr(1) / SampleRate.ir;
-        var phasor = Phasor.ar(rate: rate) + \phase.kr(0) % 1;
-        SendReply.ar(phasor - rate, replyName, [\id.ir(0)]);
+        var freq = \freq.kr(1);
+        var phase = \phase.kr(0);
+        var triggerId = \triggerId.ir(0);
+
+        var rate = freq / SampleRate.ir;
+        var phasor = Phasor.ar(rate: rate) + phase % 1;
+
+        SendReply.ar(phasor - rate, replyName, [triggerId]);
     }).add;
 
-    SynthDef(\pulse, {
-        var sig = Pulse.ar(\freq.kr(440) * LFNoise2.kr(3!5).bipolar(0.01).midiratio * SinOsc.kr(Rand(3.0, 4.5)).bipolar(0.01).midiratio, \width.kr(0.5).clip(0, 1));
-        sig = MoogFF.ar(sig, \cf.kr(20000).clip(20, 20000));
-        sig = sig * Env.perc(\atk.kr(0.01), \rel.kr(1)).ar(Done.freeSelf, timeScale: \dur.kr(1));
-        sig = Splay.ar(sig, 0.5, center: \pan.kr(0).clip(-1, 1));
-        sig = sig * \amp.kr(0.5) * SinOsc.ar(Rand(3.0, 4.5)).range(0.8, 1);
-        Out.ar(\out.ir(0), sig);
+    SynthDef(\pad, {
+        var freq = \freq.kr(440);
+        var detune = \detune.kr(0.01); // In semitones
+        var tremolo = \tremolo.kr(0.01); // In semitones
+        var pw = \pw.kr(0.5).clip(0, 1);
+        var cf = \cf.kr(20000).clip(20, 20000);
+        var atk = \atk.kr(0.01);
+        var rel = \rel.kr(1);
+        var dur = \dur.kr(1);
+        var pan = \pan.kr(0).clip(-1, 1);
+        var amp = \amp.kr(0.5);
+        var vibrato = \vibrato.kr(0.2).clip(0, 1);
+        var out = \out.ir(0);
+
+        var tremoloFreq = Rand(3.0, 4.5);
+        var vibratoFreq = Rand(3.0, 4.5);
+
+        var sig = Pulse.ar(freq * LFNoise1.kr(3!5).bipolar(detune).midiratio * SinOsc.kr(tremoloFreq).bipolar(tremolo).midiratio, pw);
+        sig = MoogFF.ar(sig, cf);
+        sig = sig * Env.perc(atk , rel).ar(Done.freeSelf, timeScale: dur);
+        sig = Splay.ar(sig, 0.5, center: pan);
+        sig = sig * amp * SinOsc.ar(vibratoFreq).range(1 - vibrato, 1);
+        Out.ar(out, sig);
     }).add;
 
     SynthDef(\bass, {
+        var trig = \trig.tr(0);
         var freq = \freq.kr(440).max(0);
         var cf = \cf.kr(20000).clip(20, 20000);
         var atk = \atk.kr(0.01).max(0);
@@ -52,14 +82,13 @@ s.waitForBoot {
 
         var sig = Saw.ar(freq) * harmonicsAmp;
         var sub = SinOsc.ar(freq * 2.pow(subOctave).reciprocal);
-        var cfEnv = Env.perc(filtAtk, filtRel, filtEnvAmp).kr(timeScale: dur);
+        var cfEnv = Env.perc(filtAtk, filtRel, filtEnvAmp).kr(Done.none, trig, timeScale: dur);
         var filtAmp = (rq+1).reciprocal.sqrt;
         sig = RLPF.ar(sig, (cf + cfEnv).clip(20, 20000), rq) * filtAmp;
         sig = sig + sub;
         sig = sig.blend((sig*2).tanh, satBlend);
-        sig = sig * Env.perc(atk, rel).ar(timeScale: dur);
+        sig = sig * Env.perc(atk, rel).ar(Done.none, trig, timeScale: dur);
         sig = Pan2.ar(sig, pan) * amp;
-        DetectSilence.ar(sig, doneAction: Done.freeSelf);
         Out.ar(out, sig);
     }).add;
 
@@ -145,6 +174,44 @@ s.waitForBoot {
         sig = Pan2.ar(sig, pan) * amp;
 
         Out.ar(0, sig);
+    }).add;
+
+    SynthDef(\woodHits, {
+        var speed = \speed.kr(1);
+        var freq = \freq.kr(15);
+        var atk = \atk.kr(0.01);
+        var rel = \rel.kr(1.0);
+        var hitRel = \hitRel.kr(0.05);
+        var dur = \dur.kr(1);
+        var trig = \trig.tr(0);
+        var buf = \buf.kr(0);
+        var amp = \amp.kr(1);
+        var cf = \cf.kr(20000);
+        var pan = \pan.kr(0);
+        var out = \out.ir(0);
+
+        var trigs = Impulse.ar(freq);
+        var envs = Env.perc(0.01, hitRel).ar(Done.none, trigs);
+        var sig = PlayBuf.ar(2, buf, speed, trigs, loop: 0);
+        sig = BPF.ar(sig, cf.clip(20, 20000));
+        sig = sig * envs * Env.perc(atk, rel).ar(Done.none, trig, timeScale: dur);
+        sig = Balance2.ar(sig[0], sig[1], pan);
+        sig = sig.blend(CombL.ar(sig.rotate, 0.25, 0.25, 5), 0.2);
+        sig = sig * amp;
+        Out.ar(out, sig);
+    }).add;
+
+    SynthDef(\gong, {
+        var buf = \buf.kr(0);
+        var speed = \speed.kr(0);
+        var amp = \amp.kr(1);
+        var pan = \pan.kr(0);
+        var out = \out.ir(0);
+
+        var sig = PlayBuf.ar(2, buf, speed, doneAction: Done.freeSelf);
+        sig = sig * amp * Line.ar(dur: 0.01);
+        sig = Balance2.ar(sig[0], sig[1], pan);
+        Out.ar(out, sig);
     }).add;
 
     SynthDef(\varLooper, {
@@ -238,21 +305,67 @@ s.waitForBoot {
     }).add;
     s.sync;
 
+    // Start triggering synths
+    s.bind { notes.do { |note, i|
+        Synth(\triggerer, [triggerId: i, freq: (freqs[i] + rrand(-0.01, 0.01)) * 0.03, phase: exprand(0.001, 1.0)]);
+    }};
+
+    // Play pad when trigger is received
     OSCFunc({|msg|
         var index = msg[3].asInteger;
-        s.bind { Synth(\pulse, [freq: (root + notes[index]).midicps, atk: rrand(1.0, 5.0), rel: (index+1).reciprocal*rrand(10.0, 20.0), cf: exprand(200, 2000), amp: (index/8+1).reciprocal * 0.25, pan: rrand(-1.0, 1.0), width: exprand(0.5, 0.95)], inGroup) };
+        s.bind { Synth(\pad, [freq: (root + notes[index]).midicps, atk: rrand(1.0, 5.0), rel: (index+1).reciprocal*rrand(10.0, 20.0), cf: exprand(200, 2000), amp: (index/8+1).reciprocal * 0.25, pan: rrand(-1.0, 1.0), width: exprand(0.5, 0.95)], inGroup) };
     }, replyName);
 
-    s.bind { notes.do { |note, i|
-        Synth(\triggerer, [freq: (freqs[i] + rrand(-0.01, 0.01)) * 0.03, id: i, phase: exprand(0.001, 1.0)]);
-    }};
+    // Play wood hits
+    Routine {
+        var waitTime = 7;
+        var synths;
+        s.bind{ synths = [postFxGroup, inGroup].collect {|target| Synth(\woodHits, target: target) } };
+        loop {
+            var note = [84, 96].wchoose([0.33, 0.66]);
+            var speed = (note - 99.5).midiratio; // Speed was tuned for 1st hit, do so for other hits
+            var buf = hitBufs.choose;
+            var amp = rrand(-20, -12);
+            var pan = rrand(0, 0.5);
+            var cf = rrand(1000, 3000);
+            var rel = rrand(1.2, 1.8);
+            var hitRel = rrand(0.05, 0.15);
+            s.bind { synths.do { |synth, i|
+                synth.set(
+                    \trig, 1,
+                    \speed, speed,
+                    \buf, buf,
+                    \amp, (amp - (i*1.5)).dbamp,
+                    \pan, pan,
+                    \cf, cf / ((i+1) * 2), // over 1 for post fx and over 4 for fx
+                    \rel, rel,
+                    \hitRel, hitRel
+                )
+            }};
+            waitTime.yield;
+        };
+    }.play;
+
+    // Play gong
+    Routine {
+        var waitTime = 24;
+        loop {
+            var choice = [(note: 36, amp: -6), (note: 48, amp: -9)].choose;
+            var speed = (choice.note - 53).midiratio;
+            var amp = (choice.amp + rrand(0, -6)).dbamp;
+            s.bind { Synth(\gong, [buf: gongBufs.choose, speed: speed, amp: amp, pan: rrand(-0.5, 0)], postFxGroup) };
+            waitTime.yield;
+        };
+    }.play;
 
     // Play bass
     Routine {
         var note = 48;
         var waitTime = 16;
+        var bass;
+        s.bind { bass = Synth(\bass, [freq: note.midicps, cf:40, rq: 0.5, atk: 0.25, filtAtk: 0.5, filtEnvAmp: 100, dur: waitTime, amp: -20.dbamp], postFxGroup) };
         loop {
-            s.bind { Synth(\bass, [freq: note.midicps, cf:40, rq: 0.5, atk: 0.25, filtAtk: 0.5, filtEnvAmp: 100, dur: waitTime, amp: -20.dbamp], postFxGroup) };
+            s.bind { bass.set(\trig, 1) };
             waitTime.yield;
         };
     }.play;
@@ -318,5 +431,5 @@ s.waitForBoot {
         ], looperGroup);
     };
     Synth.tail(fxGroup, \fx, [out: 0, buf: delayBuf]);
-};
+    };
 )
