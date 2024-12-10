@@ -55,8 +55,9 @@ s.waitForBoot {
         var ampLfo = VarSaw.kr(ampLfoFreq).unipolar.lincurve(0, 1, minAmp, maxAmp).clip(0, 1);
 
         var recTrig = Impulse.ar(recLfoFreq);
+        // Gate duration is held until the next trigger so we can use a sine here (i.e. a latch is not needed)
         var gateDuration = SinOsc.ar(recGateDurationLfoFreq).range(minDuration, bufDur.min((2*recLfoFreq).reciprocal));
-        var recGate = Trig1.ar(recTrig, gateDuration); // Get duration is held until the next trigger so we can use a sine here (i.e. a latch is not needed)
+        var recGate = Trig1.ar(recTrig, gateDuration);
         var readGate = 1 - recGate;
 
         var lastFrame = Latch.ar(phasorFeedback, readGate);
@@ -97,7 +98,7 @@ s.waitForBoot {
         var buf = \buf.ir(0);
         var sndIn = \sndIn.ir(0);
 
-        // Parameters below should be controled by GUI
+        // Parameters below should be controlled by GUI
         var tapeDryWet = \tapeDryWet.kr(0.33);
         var reverbDryWet = \reverbDryWet.kr(0.5);
         var hissAmp = \hissAmp.kr(-46.dbamp).clip(0, 1);

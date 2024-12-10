@@ -1,5 +1,5 @@
-(
 VSTPlugin.search;
+(
 s.waitForBoot {
     s.free;
     s.sync;
