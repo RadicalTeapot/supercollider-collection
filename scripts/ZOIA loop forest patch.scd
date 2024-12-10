@@ -1,5 +1,5 @@
 (
-s = ~useJACK.(2, 2);
+// s = ~useJACK.(2, 2);
 s.waitForBoot {
     var looperCount, looperBuffers, looperBuses, mixOutBus, delayBuf, mixer, fx;
     var mixValues;
@@ -158,7 +158,7 @@ s.waitForBoot {
     };
 
     mixValues = Array.fill(looperCount, 1);
-    mixer = Synth.tail(s, \mixer, [inputs: looperBuses, levels: mixValues/*, out: mixOutBus*/]);
+    mixer = Synth.tail(s, \mixer, [inputs: looperBuses, levels: mixValues, out: 2/*, out: mixOutBus*/]);
     // fx = Synth.tail(s, \fx, [in: mixOutBus, out: 0, buf: delayBuf]);
 
     AppClock.sched(0, {
