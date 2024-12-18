@@ -1,5 +1,5 @@
 (
-~crateLooper = {
+~createLooper = {
     |server, id, duration, channels=2, in=0, out=0, speed=1, xfadeDuration=0.1|
     var recorder, player;
     var path = '/play'++id;
@@ -40,6 +40,7 @@
             buffer.write(outPath, "wave", completionMessage: { "Done writing".postln });
         },
     );
+    (player: player, stopPlayer: { player.free; buffer.free });
 };
 )
 
