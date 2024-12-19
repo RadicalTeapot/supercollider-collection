@@ -53,6 +53,12 @@ s.waitForBoot {
         sig = VSTPlugin.ar(sig, 2, id: \delay);
         ReplaceOut.ar(0, sig);
     }).add;
+
+    SynthDef(\paulStretch, {
+        var sig = In.ar(0, 2);
+        sig = VSTPlugin.ar(sig, 2, info: 'PaulXStretch.vst3');
+        Out.ar(0, sig);
+    }).add;
     s.sync;
 
     ~fx = VSTPluginController.collect(Synth(\fx, addAction: 'addToTail'));
@@ -62,6 +68,10 @@ s.waitForBoot {
     s.sync;
     ~fx.rev.setProgramData(~fxRevState);
     ~fx.delay.setProgramData(~fxDelayState);
+
+    ~stretch = VSTPluginController(Synth(\paulStretch, addAction: 'addToTail')).open(action: { |self, success|
+        if (success) { self.setProgramData(~stretchState) } { "An error occured".postln };
+    });
 
     Routine {
         loop {
@@ -82,7 +92,7 @@ s.waitForBoot {
                 var start = rrand(0, 0.9);
                 var end = start + rrand(0.01, 0.1);
                 var speed = 24 * [-1, 1].choose;
-                sc swbind { Synth(\player, [speed: speed, start: start, end: end, atk: dur * 0.1, rel: dur * 0.25, dur: dur]) };
+                s.bind { Synth(\player, [speed: speed, start: start, end: end, atk: dur * 0.1, rel: dur * 0.25, dur: dur]) };
                 "Extra".postln;
             };
             time.yield;
@@ -95,5 +105,5 @@ s.waitForBoot {
 ~fx.rev.getProgramData({|data| ~fxRevState = data });
 ~fx.delay.editor;
 ~fx.delay.getProgramData({|data| ~fxDelayState = data });
-
-VSTPluginController
+~stretch.editor;
+~stretch.getProgramData({|data| ~stetchState = data });
